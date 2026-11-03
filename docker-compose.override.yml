@@ -13,17 +13,20 @@ services:
 
   casdoor:
     image: casbin/casdoor-all-in-one:latest
+    # The all-in-one image's entrypoint execs /server without the flag that
+    # creates the postgres database, which then fails on a fresh instance.
+    entrypoint: ["/server"]
+    command: ["--createDatabase=true"]
     ports:
       - "8000:8000"
     environment:
-      driverName: sqlite
-      dataSourceName: "file:/data/casdoor.db?cache=shared&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
-      # One-time bootstrap for a fresh volume; change it after first login.
+      driverName: postgres
+      # Shares the bundled postgres service, in its own casdoor database.
+      dataSourceName: "user=keygate password=keygate host=postgres port=5432 sslmode=disable dbname=casdoor"
+      # One-time bootstrap for a fresh database; change it after first login.
       initAdminPassword: KeygateAdmin123
       origin: http://host.docker.internal:8000
-    volumes:
-      - casdoor_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
-
-volumes:
-  casdoor_data:
