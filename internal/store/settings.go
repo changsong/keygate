@@ -44,8 +44,10 @@ const SettingFeedURLTTLBound = "feed_url_ttl_bound"
 
 type Setting struct {
 	bun.BaseModel `bun:"table:settings"`
-	Key           string `bun:",pk" json:"key"`
-	Value         string `json:"value"`
+	// TenantID '' is the platform-wide fallback every tenant inherits.
+	TenantID string `bun:",pk,notnull,default:''" json:"-"`
+	Key      string `bun:",pk" json:"key"`
+	Value    string `json:"value"`
 }
 
 // MaintenanceFeaturesEnabled reports whether the switch is on. A
@@ -75,7 +77,7 @@ func (s *Store) MaintenanceFeaturesEnabled(ctx context.Context) (bool, error) {
 // holding one and waiting for another.
 func MaintenanceFeaturesEnabledForWriteIn(ctx context.Context, tx bun.IDB) (bool, error) {
 	var v string
-	err := tx.NewRaw("SELECT value FROM settings WHERE key = ? FOR SHARE", SettingMaintenanceFeatures).Scan(ctx, &v)
+	err := tx.NewRaw("SELECT value FROM settings WHERE tenant_id = '' AND key = ? FOR SHARE", SettingMaintenanceFeatures).Scan(ctx, &v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -99,7 +101,7 @@ const MaxDurationSetting = 7 * 24 * time.Hour
 // measured against, and falling back to the caller's own, possibly
 // shorter, value would end that wait early without anyone noticing.
 func DurationSettingIn(ctx context.Context, db bun.IDB, key string, fallback time.Duration) (time.Duration, error) {
-	v, err := getSettingIn(ctx, db, key)
+	v, err := getSettingIn(ctx, db, "", key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fallback, nil
 	}
@@ -145,11 +147,11 @@ func (s *Store) RaiseDurationSetting(ctx context.Context, key string, d time.Dur
 		// Claim the row if it is missing. A concurrent inserter of the
 		// same key blocks here and finds its row below.
 		if _, err := tx.NewInsert().Model(&Setting{Key: key, Value: d.String()}).
-			On("CONFLICT (key) DO NOTHING").Exec(ctx); err != nil {
+			On("CONFLICT (tenant_id, key) DO NOTHING").Exec(ctx); err != nil {
 			return err
 		}
 		var current string
-		if err := tx.NewRaw("SELECT value FROM settings WHERE key = ? FOR UPDATE", key).
+		if err := tx.NewRaw("SELECT value FROM settings WHERE tenant_id = '' AND key = ? FOR UPDATE", key).
 			Scan(ctx, &current); err != nil {
 			return err
 		}
@@ -166,7 +168,7 @@ func (s *Store) RaiseDurationSetting(ctx context.Context, key string, d time.Dur
 			out = have
 			return nil
 		}
-		_, err = tx.NewRaw("UPDATE settings SET value = ? WHERE key = ?", d.String(), key).Exec(ctx)
+		_, err = tx.NewRaw("UPDATE settings SET value = ? WHERE tenant_id = '' AND key = ?", d.String(), key).Exec(ctx)
 		return err
 	})
 	if err != nil {
@@ -176,12 +178,28 @@ func (s *Store) RaiseDurationSetting(ctx context.Context, key string, d time.Dur
 }
 
 func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
-	return getSettingIn(ctx, s.DB, key)
+	return s.GetSettingForTenant(ctx, "", key)
 }
 
-func getSettingIn(ctx context.Context, db bun.IDB, key string) (string, error) {
+// GetSettingForTenant reads a tenant's override and falls back to the
+// platform-wide row (”) when the tenant has not set the key.
+func (s *Store) GetSettingForTenant(ctx context.Context, tenantID, key string) (string, error) {
+	if tenantID != "" {
+		v, err := getSettingIn(ctx, s.DB, tenantID, key)
+		if err == nil {
+			return v, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+	}
+	return getSettingIn(ctx, s.DB, "", key)
+}
+
+func getSettingIn(ctx context.Context, db bun.IDB, tenantID, key string) (string, error) {
 	setting := new(Setting)
-	err := db.NewSelect().Model(setting).Where("key = ?", key).Scan(ctx)
+	err := db.NewSelect().Model(setting).
+		Where("tenant_id = ? AND key = ?", tenantID, key).Scan(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -189,42 +207,68 @@ func getSettingIn(ctx context.Context, db bun.IDB, key string) (string, error) {
 }
 
 func (s *Store) GetSettings(ctx context.Context) (map[string]string, error) {
-	var settings []Setting
-	err := s.DB.NewSelect().Model(&settings).Scan(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]string, len(settings))
-	for _, s := range settings {
-		result[s.Key] = s.Value
-	}
-	return result, nil
+	return s.GetSettingsForTenant(ctx, "")
+}
+
+// GetSettingsForTenant merges the platform-wide settings with the
+// tenant's overrides; a tenant row wins.
+func (s *Store) GetSettingsForTenant(ctx context.Context, tenantID string) (map[string]string, error) {
+	return getSettingsIn(ctx, s.DB, tenantID, nil)
 }
 
 // GetPublicSettings returns settings safe for unauthenticated access (site branding).
 func (s *Store) GetPublicSettings(ctx context.Context) (map[string]string, error) {
+	return s.GetPublicSettingsForTenant(ctx, "")
+}
+
+// GetPublicSettingsForTenant is GetPublicSettings with tenant overrides.
+func (s *Store) GetPublicSettingsForTenant(ctx context.Context, tenantID string) (map[string]string, error) {
 	publicKeys := []string{"site_name", "timezone", "brand_color", "language", "logo_url"}
+	return getSettingsIn(ctx, s.DB, tenantID, publicKeys)
+}
+
+func getSettingsIn(ctx context.Context, db bun.IDB, tenantID string, keys []string) (map[string]string, error) {
 	var settings []Setting
-	err := s.DB.NewSelect().Model(&settings).
-		Where("key IN (?)", bun.List(publicKeys)).Scan(ctx)
-	if err != nil {
+	q := db.NewSelect().Model(&settings)
+	if tenantID == "" {
+		q = q.Where("tenant_id = ''")
+	} else {
+		q = q.Where("tenant_id IN ('', ?)", tenantID)
+	}
+	if len(keys) > 0 {
+		q = q.Where("key IN (?)", bun.List(keys))
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, err
 	}
 	result := make(map[string]string, len(settings))
-	for _, s := range settings {
-		result[s.Key] = s.Value
+	for _, st := range settings {
+		if st.TenantID == "" {
+			result[st.Key] = st.Value
+		}
+	}
+	for _, st := range settings {
+		if st.TenantID == tenantID && tenantID != "" {
+			result[st.Key] = st.Value
+		}
 	}
 	return result, nil
 }
 
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
+	return s.SetSettingForTenant(ctx, "", key, value)
+}
+
+// SetSettingForTenant writes a tenant override. tenantID ” writes the
+// platform-wide fallback.
+func (s *Store) SetSettingForTenant(ctx context.Context, tenantID, key, value string) error {
 	encoded, err := s.encodeSettingValue(key, value)
 	if err != nil {
 		return err
 	}
-	setting := &Setting{Key: key, Value: encoded}
+	setting := &Setting{TenantID: tenantID, Key: key, Value: encoded}
 	_, err = s.DB.NewInsert().Model(setting).
-		On("CONFLICT (key) DO UPDATE").
+		On("CONFLICT (tenant_id, key) DO UPDATE").
 		Set("value = EXCLUDED.value").
 		Exec(ctx)
 	return err
@@ -234,7 +278,12 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 // blanking the value would leave a row that reads as "configured but
 // empty", which is a different state from "never set".
 func (s *Store) DeleteSetting(ctx context.Context, key string) error {
-	_, err := s.DB.NewDelete().Model((*Setting)(nil)).Where("key = ?", key).Exec(ctx)
+	return s.DeleteSettingForTenant(ctx, "", key)
+}
+
+func (s *Store) DeleteSettingForTenant(ctx context.Context, tenantID, key string) error {
+	_, err := s.DB.NewDelete().Model((*Setting)(nil)).
+		Where("tenant_id = ? AND key = ?", tenantID, key).Exec(ctx)
 	return err
 }
 
@@ -242,6 +291,10 @@ func (s *Store) DeleteSetting(ctx context.Context, key string) error {
 // related state (an endpoint id with its secret, a rotation with the
 // previous secret) never leave half of it behind.
 func (s *Store) SetSettings(ctx context.Context, settings map[string]string) error {
+	return s.SetSettingsForTenant(ctx, "", settings)
+}
+
+func (s *Store) SetSettingsForTenant(ctx context.Context, tenantID string, settings map[string]string) error {
 	if len(settings) == 0 {
 		return nil
 	}
@@ -255,9 +308,9 @@ func (s *Store) SetSettings(ctx context.Context, settings map[string]string) err
 		if encErr != nil {
 			return encErr
 		}
-		setting := &Setting{Key: key, Value: encoded}
+		setting := &Setting{TenantID: tenantID, Key: key, Value: encoded}
 		if _, err := tx.NewInsert().Model(setting).
-			On("CONFLICT (key) DO UPDATE").
+			On("CONFLICT (tenant_id, key) DO UPDATE").
 			Set("value = EXCLUDED.value").
 			Exec(ctx); err != nil {
 			return err

@@ -484,6 +484,7 @@ func (s *WebhookService) DispatchWithLog(ctx context.Context, productID, event s
 
 	for _, wh := range webhooks {
 		delivery := &model.WebhookDelivery{
+			TenantID:  wh.TenantID,
 			WebhookID: wh.ID,
 			Event:     event,
 			Payload:   payload,
@@ -512,6 +513,7 @@ func (s *WebhookService) DeliverTest(ctx context.Context, wh *model.Webhook) (*m
 		return nil, ErrWebhookInactive
 	}
 	delivery := &model.WebhookDelivery{
+		TenantID:  wh.TenantID,
 		WebhookID: wh.ID,
 		Event:     "webhook.test",
 		Status:    "pending",
@@ -661,6 +663,7 @@ func (s *WebhookService) Redispatch(ctx context.Context, deliveryID string) (*mo
 		return nil, ErrWebhookDeliveryNotResendable
 	}
 	fresh := &model.WebhookDelivery{
+		TenantID:  wh.TenantID,
 		WebhookID: wh.ID,
 		Event:     orig.Event,
 		Payload:   orig.Payload, // byte-identical replay

@@ -192,7 +192,7 @@ func TestMemberKeyThroughTheSDK(t *testing.T) {
 	if _, err := us.GetQuotaStatus(ctx, ownerKey, "api_calls", ""); notFound(err) {
 		t.Fatalf("usage for the owner = %v, want the licence found", err)
 	}
-	if listed, err := seats.ListSeats(ctx, ownerKey, "", lic.Email); err != nil || len(listed) != 1 || !listed[0].Paused {
+	if listed, err := seats.ListSeats(ctx, ownerKey, "", model.Identity{Email: lic.Email}); err != nil || len(listed) != 1 || !listed[0].Paused {
 		t.Fatalf("seats listed while alice is paused: %v, %+v; want her marked paused", err, listed)
 	}
 	if _, err := s.DB.NewRaw("UPDATE plans SET max_seats = 5 WHERE id = ?", plan.ID).Exec(ctx); err != nil {

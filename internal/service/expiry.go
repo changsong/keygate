@@ -318,7 +318,7 @@ func (c *ExpiryChecker) SendUpdatesEndingReminders(ctx context.Context) {
 		// queued mail whose lease later expires and queues a second
 		// copy. Failing to queue hands the claim back for the next
 		// run; losing the claim means another pass already owns it.
-		subject, body := c.email.RenderUpdatesEnding(productName, c.store.DecryptLicenseKey(lic), lic.UpdatesUntil.UTC().Format("2006-01-02"))
+		subject, body := c.email.RenderUpdatesEndingFor(lic.TenantID, productName, c.store.DecryptLicenseKey(lic), lic.UpdatesUntil.UTC().Format("2006-01-02"))
 		switch err := c.store.EnqueueEmailAndCloseNotification(ctx, lic.Email, subject, body, token); {
 		case err == nil:
 			c.logger.Info("updates ending reminder queued", "license_id", lic.ID)

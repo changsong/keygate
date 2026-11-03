@@ -29,7 +29,17 @@ func (s *Store) FindAddonByID(ctx context.Context, id string) (*model.Addon, err
 	return a, s.DB.NewSelect().Model(a).Where("id = ?", id).Scan(ctx)
 }
 
-func (s *Store) ListAddons(ctx context.Context, productID, search string, p Page) ([]*model.Addon, int, error) {
+// FindAddonForTenant reads an addon only if it belongs to tenantID.
+func (s *Store) FindAddonForTenant(ctx context.Context, tenantID, id string) (*model.Addon, error) {
+	a := new(model.Addon)
+	q := s.DB.NewSelect().Model(a).Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	return a, q.Scan(ctx)
+}
+
+func (s *Store) ListAddons(ctx context.Context, tenantID, productID, search string, p Page) ([]*model.Addon, int, error) {
 	var out []*model.Addon
 	// The product travels with the addon. The dashboard used to name
 	// it by looking the id up in the full product list it happened to
@@ -37,6 +47,9 @@ func (s *Store) ListAddons(ctx context.Context, productID, search string, p Page
 	// not on it would have shown a bare uuid.
 	q := s.DB.NewSelect().Model(&out).Relation("Product").
 		OrderExpr("addon.sort_order ASC, addon.created_at DESC, addon.id DESC")
+	if tenantID != "" {
+		q = q.Where("addon.tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = q.Where("addon.product_id = ?", productID)
 	}
@@ -60,6 +73,15 @@ func (s *Store) UpdateAddon(ctx context.Context, a *model.Addon) error {
 
 func (s *Store) DeleteAddon(ctx context.Context, id string) error {
 	return deletedOne(s.DB.NewDelete().Model((*model.Addon)(nil)).Where("id = ?", id).Exec(ctx))
+}
+
+// DeleteAddonForTenant deletes an addon only if it belongs to tenantID.
+func (s *Store) DeleteAddonForTenant(ctx context.Context, tenantID, id string) error {
+	q := s.DB.NewDelete().Model((*model.Addon)(nil)).Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	return deletedOne(q.Exec(ctx))
 }
 
 // ─── License Addons ───

@@ -84,17 +84,19 @@ func LockSettings(t *testing.T, db *bun.DB) {
 	}
 	// Rows are kept as stored, so encrypted secrets come back unchanged.
 	var saved string
-	if err := conn.NewRaw("SELECT coalesce(jsonb_object_agg(key, value), '{}')::text FROM settings").Scan(ctx, &saved); err != nil {
+	if err := conn.NewRaw(`SELECT coalesce(jsonb_agg(jsonb_build_object(
+			'tenant_id', tenant_id, 'key', key, 'value', value)), '[]')::text
+		FROM settings`).Scan(ctx, &saved); err != nil {
 		_, _ = conn.NewRaw("SELECT pg_advisory_unlock(?)", settingsLockKey).Exec(ctx)
 		_ = conn.Close()
 		t.Fatalf("settings lock: save settings: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := conn.NewRaw(`WITH saved AS (SELECT key, value FROM jsonb_each_text(?::jsonb)),
-			dropped AS (DELETE FROM settings WHERE key NOT IN (SELECT key FROM saved))
-			INSERT INTO settings (key, value) SELECT key, value FROM saved
-			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-			WHERE settings.value IS DISTINCT FROM EXCLUDED.value`, saved).Exec(ctx); err != nil {
+		if _, err := conn.NewRaw(`WITH saved AS (
+				SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(tenant_id text, key text, value text)
+			), cleared AS (DELETE FROM settings)
+			INSERT INTO settings (tenant_id, key, value)
+			SELECT tenant_id, key, value FROM saved`, saved).Exec(ctx); err != nil {
 			t.Errorf("settings lock: put settings back: %v", err)
 		}
 		if _, err := conn.NewRaw("SELECT pg_advisory_unlock(?)", settingsLockKey).Exec(ctx); err != nil {
@@ -114,7 +116,7 @@ func LockSettings(t *testing.T, db *bun.DB) {
 func SetSetting(t *testing.T, db *bun.DB, key, value string) {
 	t.Helper()
 	LockSettings(t, db)
-	if _, err := db.ExecContext(context.Background(), "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", key, value); err != nil {
+	if _, err := db.ExecContext(context.Background(), "INSERT INTO settings (tenant_id, key, value) VALUES ('', ?, ?) ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value", key, value); err != nil {
 		t.Fatalf("set %s: %v", key, err)
 	}
 }

@@ -222,7 +222,7 @@ func RateLimit(rate int, window time.Duration) gin.HandlerFunc {
 // of its own instead of eating into the shared one.
 func RateLimitByIPScoped(scope string, rate int, window time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !defaultBackend.Allow("ip:"+scope+":"+c.ClientIP(), rate, window) {
+		if !defaultBackend.Allow(ipKey(scope, c), rate, window) {
 			rateLimited(c, window)
 			return
 		}
@@ -230,10 +230,20 @@ func RateLimitByIPScoped(scope string, rate int, window time.Duration) gin.Handl
 	}
 }
 
+// ipKey is the counter a request spends from. The workspace is part of
+// it when one is known: a shared office address reaching two tenants
+// must not have one tenant's traffic lock out the other.
+func ipKey(scope string, c *gin.Context) string {
+	if tenant := TenantIDFrom(c); tenant != "" {
+		return "ip:" + scope + ":" + tenant + ":" + c.ClientIP()
+	}
+	return "ip:" + scope + ":" + c.ClientIP()
+}
+
 // RateLimitByIP creates a rate limiter keyed by IP only.
 func RateLimitByIP(rate int, window time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !defaultBackend.Allow("ip:"+c.ClientIP(), rate, window) {
+		if !defaultBackend.Allow(ipKey("", c), rate, window) {
 			rateLimited(c, window)
 			return
 		}

@@ -131,7 +131,7 @@ func TestSeatManagementIsTheOwners(t *testing.T) {
 		strings.ToUpper(lic.Email): "alice,bob,hank",
 		alice.Email:                "alice,bob",
 	} {
-		seats, err := svc.ListSeats(ctx, lic.LicenseKey, "", actor)
+		seats, err := svc.ListSeats(ctx, lic.LicenseKey, "", model.Identity{Email: actor})
 		if err != nil || emails(seats) != want {
 			t.Fatalf("team as %s sees it = %s, %v; want %s", actor, emails(seats), err, want)
 		}
@@ -199,7 +199,7 @@ func TestSeatManagementIsTheOwners(t *testing.T) {
 	if err := invite(lic.Email, "gina", "member"); !notFound(err) {
 		t.Fatalf("invite on a suspended licence = %v, want LICENSE_NOT_FOUND", err)
 	}
-	if seats, err := svc.ListSeats(ctx, lic.LicenseKey, "", lic.Email); err != nil || len(seats) != 2 {
+	if seats, err := svc.ListSeats(ctx, lic.LicenseKey, "", model.Identity{Email: lic.Email}); err != nil || len(seats) != 2 {
 		t.Fatalf("list on a suspended licence = %d seats, %v; want 2", len(seats), err)
 	}
 	if err := remove(lic.Email, alice); err != nil {

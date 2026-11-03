@@ -525,6 +525,30 @@ func (s *Store) FindSeatByEmail(ctx context.Context, licenseID, email string) (*
 		Scan(ctx)
 }
 
+// FindSeatForIdentity is FindSeatByEmail for a signed-in identity: a
+// seat bound to a user matches only that user, while a seat not yet
+// bound still matches its address. The oldest accepted seat wins, so a
+// legacy pending row in another case cannot shadow the real one.
+func (s *Store) FindSeatForIdentity(ctx context.Context, licenseID string, id model.Identity) (*model.Seat, error) {
+	seat := new(model.Seat)
+	q := s.DB.NewSelect().Model(seat).
+		Where("license_id = ? AND removed_at IS NULL", licenseID)
+	switch {
+	case id.UserID != "" && id.Email != "":
+		q = q.Where("(user_id = ? OR (user_id IS NULL AND lower(email) = ?))", id.UserID, normalizeEmail(id.Email))
+	case id.UserID != "":
+		q = q.Where("user_id = ?", id.UserID)
+	case id.Email != "":
+		q = q.Where("user_id IS NULL AND lower(email) = ?", normalizeEmail(id.Email))
+	default:
+		return seat, sql.ErrNoRows
+	}
+	return seat, q.
+		OrderExpr("accepted_at IS NULL, created_at ASC, id ASC").
+		Limit(1).
+		Scan(ctx)
+}
+
 func (s *Store) ListSeats(ctx context.Context, licenseID string, p Page) ([]*model.Seat, int, error) {
 	var out []*model.Seat
 	q := s.DB.NewSelect().Model(&out).

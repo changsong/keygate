@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/gin-gonic/gin"
 
+	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/service"
 	"github.com/tabloy/keygate/pkg/response"
 )
@@ -75,7 +76,7 @@ func (h *SeatHandler) ListSeats(c *gin.Context) {
 	}
 
 	productID, _ := c.Get("product_id")
-	seats, err := h.svc.ListSeats(c.Request.Context(), req.LicenseKey, str(productID), emailFromContext(c))
+	seats, err := h.svc.ListSeats(c.Request.Context(), req.LicenseKey, str(productID), middleware.IdentityFrom(c))
 	if err != nil {
 		writeAppErr(c, err)
 		return

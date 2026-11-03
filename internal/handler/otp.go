@@ -250,7 +250,12 @@ func (h *AuthHandler) startSession(c *gin.Context, user *model.User) {
 // Existing accounts keep working either way: the restriction is on
 // creating accounts, not on logging into one that already exists.
 func (h *AuthHandler) signupAllowed(c *gin.Context, email string) bool {
-	mode, err := h.Store.GetSetting(c, "signup_mode")
+	// With multi-tenancy off the rule stays the platform-wide one every
+	// install has always applied. With it on, licensed_only is judged
+	// inside the workspace being entered: a membership or an asset
+	// there, not an account somewhere else.
+	tenant := settingsTenant(c)
+	mode, err := h.Store.GetSettingForTenant(c, tenant, "signup_mode")
 	if err != nil {
 		// No row is the normal state of an install that never touched
 		// the setting, and it means open sign-ups. Any other error is
@@ -266,7 +271,7 @@ func (h *AuthHandler) signupAllowed(c *gin.Context, email string) bool {
 	if mode != "licensed_only" {
 		return true
 	}
-	known, err := h.Store.HasAccountOrLicense(c, email)
+	known, err := h.Store.HasAccountOrLicenseIn(c, tenant, email)
 	if err != nil {
 		// Fail closed: this is the gate that stops the endpoint from
 		// mailing strangers, and a lookup that did not run is not an

@@ -114,7 +114,7 @@ var (
 // Nil receiver: when storage isn't configured the service is wired as nil
 // (see main.go). All public methods short-circuit to ErrSigningDisabled
 // rather than panic, so handlers can map cleanly to a 503.
-func (s *ReleaseSigningService) GenerateForProduct(ctx context.Context, productID string) (*model.ReleaseSigningKey, error) {
+func (s *ReleaseSigningService) GenerateForProduct(ctx context.Context, tenantID, productID string) (*model.ReleaseSigningKey, error) {
 	if s == nil || s.aead == nil {
 		return nil, ErrSigningDisabled
 	}
@@ -141,6 +141,7 @@ func (s *ReleaseSigningService) GenerateForProduct(ctx context.Context, productI
 	}
 
 	key := &model.ReleaseSigningKey{
+		TenantID:            tenantID,
 		ProductID:           productID,
 		PublicKey:           base64.StdEncoding.EncodeToString(pub),
 		PrivateKeyEncrypted: encrypted,
@@ -157,7 +158,7 @@ func (s *ReleaseSigningService) GenerateForProduct(ctx context.Context, productI
 // RotateForProduct generates a new keypair and atomically deactivates the
 // previous active key. The note explains the rotation reason and is stored
 // on the OLD key (which becomes inactive).
-func (s *ReleaseSigningService) RotateForProduct(ctx context.Context, productID, note string) (*model.ReleaseSigningKey, error) {
+func (s *ReleaseSigningService) RotateForProduct(ctx context.Context, tenantID, productID, note string) (*model.ReleaseSigningKey, error) {
 	if s == nil || s.aead == nil {
 		return nil, ErrSigningDisabled
 	}
@@ -180,6 +181,7 @@ func (s *ReleaseSigningService) RotateForProduct(ctx context.Context, productID,
 	}
 
 	key := &model.ReleaseSigningKey{
+		TenantID:            tenantID,
 		ProductID:           productID,
 		PublicKey:           base64.StdEncoding.EncodeToString(pub),
 		PrivateKeyEncrypted: encrypted,

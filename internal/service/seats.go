@@ -22,11 +22,20 @@ type SeatService struct {
 	// service then falls back to a relative path so the email still
 	// reads sensibly without a leading host.
 	baseURL string
-	logger  *slog.Logger
+	// tenantBaseURL maps a workspace to its public origin, so an invite
+	// sent for one tenant claims on that tenant's host.
+	tenantBaseURL func(tenantID string) string
+	logger        *slog.Logger
 }
 
 func NewSeatService(s *store.Store, wh *WebhookService, em *EmailService, logger *slog.Logger, baseURL string) *SeatService {
 	return &SeatService{store: s, webhook: wh, email: em, logger: logger, baseURL: strings.TrimRight(baseURL, "/")}
+}
+
+// SetTenantBaseURLResolver supplies the per-workspace public origin.
+// A tenant that resolves to "" falls back to baseURL.
+func (s *SeatService) SetTenantBaseURLResolver(fn func(tenantID string) string) {
+	s.tenantBaseURL = fn
 }
 
 type AddSeatInput struct {
@@ -38,17 +47,23 @@ type AddSeatInput struct {
 	// for audit. Empty when invoked from an unauthenticated path
 	// (none today; kept optional so legacy callers compile).
 	ActorUserID string
-	// ActorEmail is the signed-in address driving the action: only the
-	// license owner manages the team (see requireOwner).
+	// ActorEmail is the signed-in address driving the action: with
+	// ActorUserID it forms the identity only the license owner may
+	// manage the team as (see requireOwner).
 	ActorEmail string
+}
+
+// actorIdentity is the ownership identity behind an action.
+func actorIdentity(userID, email string) model.Identity {
+	return model.Identity{UserID: userID, Email: email}
 }
 
 // requireOwner holds team management to the licence's owner. Anyone
 // else, members included, gets the same 404 an unknown licence does;
 // the portal guard has turned them away already, this holds the line
 // on its own.
-func requireOwner(lic *model.License, email string) error {
-	if email != "" && strings.EqualFold(lic.Email, email) {
+func requireOwner(lic *model.License, id model.Identity) error {
+	if lic.OwnedBy(id) {
 		return nil
 	}
 	return licenseNotFound()
@@ -64,7 +79,7 @@ func (s *SeatService) AddSeat(ctx context.Context, in AddSeatInput) (*model.Seat
 	if err != nil {
 		return nil, err
 	}
-	if err := requireOwner(lic, in.ActorEmail); err != nil {
+	if err := requireOwner(lic, actorIdentity(in.ActorUserID, in.ActorEmail)); err != nil {
 		return nil, err
 	}
 
@@ -168,7 +183,7 @@ func (s *SeatService) AddSeat(ctx context.Context, in AddSeatInput) (*model.Seat
 			if lic.Product != nil {
 				productName, downloadURL = lic.Product.Name, lic.Product.DownloadURL
 			}
-			s.email.SendSeatInvite(in.Email, productName, lic.Email, s.inviteURL(plainToken), downloadURL)
+			s.email.SendSeatInvite(in.Email, productName, lic.Email, s.inviteURL(lic.TenantID, plainToken), downloadURL)
 		}
 		s.logger.Info("seat added", "license_id", lic.ID, "email", in.Email, "outcome", outcome)
 	}
@@ -195,11 +210,17 @@ func (s *SeatService) AddSeat(ctx context.Context, in AddSeatInput) (*model.Seat
 // keep the path stable (/accept-invite?token=...) so the frontend
 // route is a fixed contract — the email body never embeds a deep
 // link to internal admin paths.
-func (s *SeatService) inviteURL(plainToken string) string {
-	if s.baseURL == "" {
+func (s *SeatService) inviteURL(tenantID, plainToken string) string {
+	base := s.baseURL
+	if tenantID != "" && s.tenantBaseURL != nil {
+		if b := strings.TrimRight(strings.TrimSpace(s.tenantBaseURL(tenantID)), "/"); b != "" {
+			base = b
+		}
+	}
+	if base == "" {
 		return "/accept-invite?token=" + plainToken
 	}
-	return s.baseURL + "/accept-invite?token=" + plainToken
+	return base + "/accept-invite?token=" + plainToken
 }
 
 // AcceptSeatInviteResult is what POST /invites/accept returns. We hand back
@@ -263,6 +284,14 @@ func (s *SeatService) AcceptSeatInvite(ctx context.Context, plainToken string) (
 		return nil, apperr.New(404, "SEAT_INVITE_INVALID",
 			"this invitation is invalid or has expired")
 	}
+	// A member has to reach the workspace its seat lives in; the portal
+	// route asks for membership, and accepting the invite is the proof.
+	// An existing role is left alone: an owner invited as a member keeps
+	// ownership.
+	if merr := s.store.EnsureTenantMember(ctx, lic.TenantID, user.ID); merr != nil {
+		s.logger.Warn("seat accept: could not add the member to the workspace",
+			"tenant_id", lic.TenantID, "user_id", user.ID, "error", merr)
+	}
 	productName := ""
 	if lic.Product != nil {
 		productName = lic.Product.Name
@@ -286,7 +315,7 @@ func (s *SeatService) RemoveSeat(ctx context.Context, licenseKey, seatID, produc
 	if err != nil {
 		return err
 	}
-	if err := requireOwner(lic, actorEmail); err != nil {
+	if err := requireOwner(lic, actorIdentity(actorUserID, actorEmail)); err != nil {
 		return err
 	}
 	return s.removeSeat(ctx, lic, seatID, "portal_user", actorUserID, "")
@@ -347,10 +376,9 @@ func (s *SeatService) removeSeat(ctx context.Context, lic *model.License, seatID
 }
 
 // ListSeats is the team, whatever the licence's state, so an owner can
-// see whom to remove while it is lapsed or suspended. The owner
-// (actorEmail is license.email) sees pending invitations too; a member
-// sees who has joined.
-func (s *SeatService) ListSeats(ctx context.Context, licenseKey, productID, actorEmail string) ([]*model.Seat, error) {
+// see whom to remove while it is lapsed or suspended. The owner sees
+// pending invitations too; a member sees who has joined.
+func (s *SeatService) ListSeats(ctx context.Context, licenseKey, productID string, actor model.Identity) ([]*model.Seat, error) {
 	lic, err := loadLicenseForSDK(ctx, s.store, licenseKey, productID, model.CapSeats, false)
 	if err != nil {
 		return nil, err
@@ -360,7 +388,7 @@ func (s *SeatService) ListSeats(ctx context.Context, licenseKey, productID, acto
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	if !strings.EqualFold(lic.Email, actorEmail) {
+	if !lic.OwnedBy(actor) {
 		seats = model.JoinedSeats(seats)
 	}
 	if err := s.store.MarkPausedSeats(ctx, lic.ID, seats); err != nil {

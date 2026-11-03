@@ -76,7 +76,7 @@ func TestLatestPublishedVersions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := s.LatestPublishedVersions(ctx, prod.ID)
+	got, err := s.LatestPublishedVersions(ctx, "", prod.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

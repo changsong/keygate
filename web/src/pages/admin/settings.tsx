@@ -720,7 +720,10 @@ function TeamManagement() {
   const qc = useQueryClient()
   const [email, setEmail] = useState("")
   const [role, setRole] = useState("admin")
-  const isOwner = user?.role === "owner"
+  // Team management belongs to the workspace owner, or a platform admin
+  // handling support. users.role is the platform role and says nothing
+  // about standing in this tenant.
+  const isOwner = user?.tenant_role === "owner" || user?.is_platform_admin === true
 
   const pg = useServerPagination(20)
   const { data, isLoading } = useQuery({
@@ -842,6 +845,7 @@ function TeamManagement() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="member">Member</SelectItem>
                     <SelectItem value="admin">Admin</SelectItem>
                     <SelectItem value="owner">Owner</SelectItem>
                   </SelectContent>

@@ -16,6 +16,10 @@ RUN bun run build
 # install under the target arch, so the arm64 image is faster to build but
 # not fully emulation-free.
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS backend
+# Override for networks where proxy.golang.org is unreachable, e.g.
+# --build-arg GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
 RUN apk add --no-cache git
 WORKDIR /app
 COPY go.mod go.sum ./

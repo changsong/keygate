@@ -18,8 +18,9 @@ func (s *Store) RecordUsageEvent(ctx context.Context, e *model.UsageEvent) error
 	return err
 }
 
-func (s *Store) IncrementUsageCounter(ctx context.Context, licenseID, feature, period, periodKey string, quantity int64) (*model.UsageCounter, error) {
+func (s *Store) IncrementUsageCounter(ctx context.Context, tenantID, licenseID, feature, period, periodKey string, quantity int64) (*model.UsageCounter, error) {
 	c := &model.UsageCounter{
+		TenantID:  tenantID,
 		ID:        newID(),
 		LicenseID: licenseID,
 		Feature:   feature,
@@ -45,18 +46,23 @@ var ErrUsageQuantityTooLarge = errors.New("usage quantity too large")
 // would not exceed the limit. Returns the updated counter and whether the increment was accepted.
 // Uses SELECT FOR UPDATE to prevent race conditions where concurrent requests could both
 // pass the limit check and exceed the quota.
-func (s *Store) IncrementUsageCounterWithLimit(ctx context.Context, licenseID, feature, period, periodKey string, quantity, limit int64) (*model.UsageCounter, bool, error) {
+func (s *Store) IncrementUsageCounterWithLimit(ctx context.Context, tenantID, licenseID, feature, period, periodKey string, quantity, limit int64) (*model.UsageCounter, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, false, err
 	}
 	defer tx.Rollback()
 
+	if tenantID == "" {
+		// The caller usually has the licence; a row written without a
+		// workspace would belong to the default one.
+		tenantID = model.DefaultTenantID
+	}
 	_, err = tx.NewRaw(`
-		INSERT INTO usage_counters (id, license_id, feature, period, period_key, used, updated_at)
-		VALUES (?, ?, ?, ?, ?, 0, now())
+		INSERT INTO usage_counters (tenant_id, id, license_id, feature, period, period_key, used, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 0, now())
 		ON CONFLICT (license_id, feature, period, period_key) DO NOTHING
-	`, newID(), licenseID, feature, period, periodKey).Exec(ctx)
+	`, tenantID, newID(), licenseID, feature, period, periodKey).Exec(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -79,6 +85,7 @@ func (s *Store) IncrementUsageCounterWithLimit(ctx context.Context, licenseID, f
 	}
 	if limit > 0 && currentUsed+quantity > limit {
 		c := &model.UsageCounter{
+			TenantID:  tenantID,
 			LicenseID: licenseID,
 			Feature:   feature,
 			Period:    period,

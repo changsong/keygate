@@ -105,12 +105,15 @@ func (s *Store) CreateAnalyticsSnapshot(ctx context.Context, snap *model.Analyti
 	return err
 }
 
-func (s *Store) ListAnalyticsSnapshots(ctx context.Context, productID string, from, to time.Time) ([]*model.AnalyticsSnapshot, error) {
+func (s *Store) ListAnalyticsSnapshots(ctx context.Context, tenantID, productID string, from, to time.Time) ([]*model.AnalyticsSnapshot, error) {
 	// When filtered by product, each date has exactly one row — return as-is.
 	if productID != "" {
 		var out []*model.AnalyticsSnapshot
 		q := s.DB.NewSelect().Model(&out).OrderExpr("date ASC").
 			Where("product_id = ?", productID)
+		if tenantID != "" {
+			q = q.Where("tenant_id = ?", tenantID)
+		}
 		if !from.IsZero() {
 			q = q.Where("date >= ?", from)
 		}
@@ -138,6 +141,9 @@ func (s *Store) ListAnalyticsSnapshots(ctx context.Context, productID string, fr
 		ColumnExpr("SUM(total_usage) AS total_usage").
 		GroupExpr("date").
 		OrderExpr("date ASC")
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
 	if !from.IsZero() {
 		q = q.Where("date >= ?", from)
 	}
@@ -148,7 +154,7 @@ func (s *Store) ListAnalyticsSnapshots(ctx context.Context, productID string, fr
 	return out, err
 }
 
-func (s *Store) ListAnalyticsSnapshotsAggregated(ctx context.Context, productID string, from, to time.Time, granularity string) ([]*AggregatedSnapshot, error) {
+func (s *Store) ListAnalyticsSnapshotsAggregated(ctx context.Context, tenantID, productID string, from, to time.Time, granularity string) ([]*AggregatedSnapshot, error) {
 	// When a single product is selected, each date has one row, so AVG across
 	// the period bucket gives the average daily value. When no product filter
 	// is set, we first need to SUM across products for each date, then AVG
@@ -168,6 +174,9 @@ func (s *Store) ListAnalyticsSnapshotsAggregated(ctx context.Context, productID 
 		ColumnExpr("SUM(total_usage) AS total_usage").
 		GroupExpr("date")
 
+	if tenantID != "" {
+		inner = inner.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		inner = inner.Where("product_id = ?", productID)
 	}
@@ -212,7 +221,10 @@ func (s *Store) ListAnalyticsSnapshotsAggregated(ctx context.Context, productID 
 }
 
 // AnalyticsFilter holds optional filters shared across analytics queries.
+// TenantID bounds every count to the workspace asking; empty means no
+// bound, as on a platform console reading across tenants.
 type AnalyticsFilter struct {
+	TenantID    string
 	ProductID   string
 	PlanID      string
 	LicenseType string
@@ -229,6 +241,9 @@ func applyLicenseFilters(q *bun.SelectQuery, f AnalyticsFilter, tableAlias strin
 			return tableAlias + "." + name
 		}
 		return name
+	}
+	if f.TenantID != "" {
+		q = q.Where(col("tenant_id")+" = ?", f.TenantID)
 	}
 	if f.ProductID != "" {
 		q = q.Where(col("product_id")+" = ?", f.ProductID)
@@ -372,7 +387,7 @@ func (s *Store) GetLicenseBreakdown(ctx context.Context, f AnalyticsFilter, dime
 	}
 }
 
-func (s *Store) GetTopFeatureUsage(ctx context.Context, productID string, from, to time.Time, limit int) ([]FeatureUsageItem, error) {
+func (s *Store) GetTopFeatureUsage(ctx context.Context, tenantID, productID string, from, to time.Time, limit int) ([]FeatureUsageItem, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -387,9 +402,16 @@ func (s *Store) GetTopFeatureUsage(ctx context.Context, productID string, from, 
 		OrderExpr("total_usage DESC").
 		Limit(limit)
 
-	if productID != "" {
-		q = q.Join("JOIN licenses AS l ON l.id = ue.license_id").
-			Where("l.product_id = ?", productID)
+	// Either bound needs the licence: usage rows carry no tenant of
+	// their own to trust, as they are written from the key path.
+	if productID != "" || tenantID != "" {
+		q = q.Join("JOIN licenses AS l ON l.id = ue.license_id")
+		if productID != "" {
+			q = q.Where("l.product_id = ?", productID)
+		}
+		if tenantID != "" {
+			q = q.Where("l.tenant_id = ?", tenantID)
+		}
 	}
 	if !from.IsZero() {
 		q = q.Where("ue.recorded_at >= ?", from)
@@ -405,7 +427,7 @@ func (s *Store) GetTopFeatureUsage(ctx context.Context, productID string, from, 
 // GetActivationTrend counts activations per UTC day. The from/to bounds
 // are UTC days too; bucketing by the session's time zone instead would
 // shift every bar on a database not set to UTC.
-func (s *Store) GetActivationTrend(ctx context.Context, productID string, from, to time.Time) ([]TrendPoint, error) {
+func (s *Store) GetActivationTrend(ctx context.Context, tenantID, productID string, from, to time.Time) ([]TrendPoint, error) {
 	var out []TrendPoint
 	q := s.DB.NewSelect().
 		TableExpr("activations AS a").
@@ -414,9 +436,14 @@ func (s *Store) GetActivationTrend(ctx context.Context, productID string, from, 
 		GroupExpr("DATE(a.created_at AT TIME ZONE 'UTC')").
 		OrderExpr("DATE(a.created_at AT TIME ZONE 'UTC') ASC")
 
-	if productID != "" {
-		q = q.Join("JOIN licenses AS l ON l.id = a.license_id").
-			Where("l.product_id = ?", productID)
+	if productID != "" || tenantID != "" {
+		q = q.Join("JOIN licenses AS l ON l.id = a.license_id")
+		if productID != "" {
+			q = q.Where("l.product_id = ?", productID)
+		}
+		if tenantID != "" {
+			q = q.Where("l.tenant_id = ?", tenantID)
+		}
 	}
 	if !from.IsZero() {
 		q = q.Where("a.created_at >= ?", from)
@@ -454,7 +481,12 @@ func (s *Store) TakeSnapshot(ctx context.Context, productID string, date time.Ti
 		Where("license_id IN (SELECT id FROM licenses WHERE product_id = ?) AND recorded_at >= ? AND recorded_at < ?", productID, dateOnly, nextDay).
 		Scan(ctx, &usageResult)
 
+	var licenseTenant string
+	_ = s.DB.NewSelect().Model((*model.Product)(nil)).
+		Column("tenant_id").Where("id = ?", productID).Scan(ctx, &licenseTenant)
+
 	snap := &model.AnalyticsSnapshot{
+		TenantID:         licenseTenant,
 		Date:             dateOnly,
 		ProductID:        productID,
 		TotalLicenses:    total,
@@ -474,7 +506,7 @@ func (s *Store) TakeSnapshot(ctx context.Context, productID string, date time.Ti
 // restarts: a wait of 24 hours from start, restarted by every restart,
 // never came round on a server restarted more than once a day.
 func (s *Store) TakeMissingSnapshots(ctx context.Context, date time.Time) error {
-	products, _, err := s.ListProducts(ctx, "", nil, All)
+	products, _, err := s.ListProducts(ctx, "", "", nil, All)
 	if err != nil {
 		return err
 	}
@@ -496,7 +528,7 @@ func (s *Store) TakeMissingSnapshots(ctx context.Context, date time.Time) error 
 }
 
 func (s *Store) TakeAllSnapshots(ctx context.Context, date time.Time) error {
-	products, _, err := s.ListProducts(ctx, "", nil, All)
+	products, _, err := s.ListProducts(ctx, "", "", nil, All)
 	if err != nil {
 		return err
 	}
@@ -508,10 +540,13 @@ func (s *Store) TakeAllSnapshots(ctx context.Context, date time.Time) error {
 	return nil
 }
 
-func (s *Store) GetGrowthMetrics(ctx context.Context, productID string) (*GrowthMetrics, error) {
+func (s *Store) GetGrowthMetrics(ctx context.Context, tenantID, productID string) (*GrowthMetrics, error) {
 	gm := &GrowthMetrics{}
 
 	tq := s.DB.NewSelect().TableExpr("licenses")
+	if tenantID != "" {
+		tq = tq.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		tq = tq.Where("product_id = ?", productID)
 	}
@@ -522,6 +557,9 @@ func (s *Store) GetGrowthMetrics(ctx context.Context, productID string) (*Growth
 
 	nq := s.DB.NewSelect().TableExpr("licenses").
 		Where("created_at >= now() - interval '30 days'")
+	if tenantID != "" {
+		nq = nq.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		nq = nq.Where("product_id = ?", productID)
 	}
@@ -534,6 +572,9 @@ func (s *Store) GetGrowthMetrics(ctx context.Context, productID string) (*Growth
 	cq := s.DB.NewSelect().TableExpr("licenses").
 		Where("status IN ('canceled','expired')").
 		Where("updated_at >= now() - interval '30 days'")
+	if tenantID != "" {
+		cq = cq.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		cq = cq.Where("product_id = ?", productID)
 	}
@@ -564,6 +605,9 @@ func (s *Store) GetGrowthMetrics(ctx context.Context, productID string) (*Growth
 
 	ttq := s.DB.NewSelect().TableExpr("licenses AS l").
 		Where("(l.plan_id IN (" + trialPlans + ") OR l.id IN (" + converted + ") OR l.id IN (" + leftTrial + "))")
+	if tenantID != "" {
+		ttq = ttq.Where("l.tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		ttq = ttq.Where("l.product_id = ?", productID)
 	}
@@ -575,6 +619,9 @@ func (s *Store) GetGrowthMetrics(ctx context.Context, productID string) (*Growth
 
 	ctq := s.DB.NewSelect().TableExpr("licenses AS l").
 		Where("(l.id IN (" + converted + ") OR (l.plan_id IN (" + trialPlans + ") AND l.status = 'active'))")
+	if tenantID != "" {
+		ctq = ctq.Where("l.tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		ctq = ctq.Where("l.product_id = ?", productID)
 	}
@@ -593,6 +640,9 @@ func (s *Store) GetGrowthMetrics(ctx context.Context, productID string) (*Growth
 	}
 	aq := s.DB.NewSelect().TableExpr("licenses").
 		ColumnExpr("COALESCE(EXTRACT(EPOCH FROM AVG(now() - created_at))/86400, 0) AS avg")
+	if tenantID != "" {
+		aq = aq.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		aq = aq.Where("product_id = ?", productID)
 	}
@@ -606,6 +656,9 @@ func (s *Store) GetGrowthMetrics(ctx context.Context, productID string) (*Growth
 	}
 	mq := s.DB.NewSelect().TableExpr("licenses").
 		ColumnExpr("COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (now() - created_at))/86400), 0) AS median")
+	if tenantID != "" {
+		mq = mq.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		mq = mq.Where("product_id = ?", productID)
 	}
@@ -617,7 +670,7 @@ func (s *Store) GetGrowthMetrics(ctx context.Context, productID string) (*Growth
 	return gm, nil
 }
 
-func (s *Store) GetLicenseAgeDistribution(ctx context.Context, productID string) ([]LicenseAgeDistribution, error) {
+func (s *Store) GetLicenseAgeDistribution(ctx context.Context, tenantID, productID string) ([]LicenseAgeDistribution, error) {
 	var out []LicenseAgeDistribution
 	q := s.DB.NewSelect().
 		TableExpr("licenses").
@@ -632,6 +685,9 @@ func (s *Store) GetLicenseAgeDistribution(ctx context.Context, productID string)
 		ColumnExpr("COUNT(*)::int AS count").
 		GroupExpr("bucket").
 		OrderExpr("MIN(now() - created_at)")
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = q.Where("product_id = ?", productID)
 	}
@@ -639,7 +695,7 @@ func (s *Store) GetLicenseAgeDistribution(ctx context.Context, productID string)
 	return out, err
 }
 
-func (s *Store) GetRecentActivity(ctx context.Context, productID string, limit int) ([]RecentActivity, error) {
+func (s *Store) GetRecentActivity(ctx context.Context, tenantID, productID string, limit int) ([]RecentActivity, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -649,6 +705,9 @@ func (s *Store) GetRecentActivity(ctx context.Context, productID string, limit i
 		ColumnExpr("id, entity, entity_id, action, actor_type, created_at").
 		OrderExpr("created_at DESC").
 		Limit(limit)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = auditOfProduct(q, productID)
 	}
@@ -658,7 +717,7 @@ func (s *Store) GetRecentActivity(ctx context.Context, productID string, limit i
 
 // GetTopUsers returns the top customers by license count and usage.
 // Excludes admin/owner users — they are platform operators, not customers.
-func (s *Store) GetTopUsers(ctx context.Context, productID string, limit int) ([]TopUser, error) {
+func (s *Store) GetTopUsers(ctx context.Context, tenantID, productID string, limit int) ([]TopUser, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -686,6 +745,9 @@ func (s *Store) GetTopUsers(ctx context.Context, productID string, limit int) ([
 		GroupExpr("lower(l.email)").
 		OrderExpr("license_count DESC, total_usage DESC, lower(l.email) ASC").
 		Limit(limit)
+	if tenantID != "" {
+		q = q.Where("l.tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = q.Where("l.product_id = ?", productID)
 	}
@@ -693,7 +755,7 @@ func (s *Store) GetTopUsers(ctx context.Context, productID string, limit int) ([
 	return out, err
 }
 
-func (s *Store) GetRetentionData(ctx context.Context, productID string, months int) ([]RetentionData, error) {
+func (s *Store) GetRetentionData(ctx context.Context, tenantID, productID string, months int) ([]RetentionData, error) {
 	if months <= 0 {
 		months = 6
 	}
@@ -708,6 +770,9 @@ func (s *Store) GetRetentionData(ctx context.Context, productID string, months i
 		ColumnExpr("SUM(active_licenses) AS active_licenses").
 		Where(fmt.Sprintf("date >= now() - interval '%d months'", months)).
 		GroupExpr("date")
+	if tenantID != "" {
+		daily = daily.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		daily = daily.Where("product_id = ?", productID)
 	}
@@ -748,7 +813,11 @@ type UserDetail struct {
 	AuditLogs     []*model.AuditLog     `json:"recent_audit_logs"`
 }
 
-func (s *Store) GetUserDetail(ctx context.Context, userID string) (*UserDetail, error) {
+// GetUserDetail reads the customer view of a global account within one
+// workspace: a tenant admin sees the licences and seats that workspace
+// holds, not the same person's rows elsewhere. Empty tenantID reads all
+// of them, for the platform console.
+func (s *Store) GetUserDetail(ctx context.Context, tenantID, userID string) (*UserDetail, error) {
 	user, err := s.FindUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -757,12 +826,15 @@ func (s *Store) GetUserDetail(ctx context.Context, userID string) (*UserDetail, 
 	detail := &UserDetail{User: user}
 
 	var licenses []*model.License
-	err = s.DB.NewSelect().Model(&licenses).
+	lq := s.DB.NewSelect().Model(&licenses).
 		Relation("Plan").Relation("Plan.Entitlements").
 		Relation("Product").Relation("Activations").Relation("Seats").
-		Where("license.user_id = ? OR lower(license.email) = ?", userID, normalizeEmail(user.Email)).
-		OrderExpr("license.created_at DESC").
-		Scan(ctx)
+		Where("(license.user_id = ? OR lower(license.email) = ?)", userID, normalizeEmail(user.Email)).
+		OrderExpr("license.created_at DESC")
+	if tenantID != "" {
+		lq = lq.Where("license.tenant_id = ?", tenantID)
+	}
+	err = lq.Scan(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -771,13 +843,16 @@ func (s *Store) GetUserDetail(ctx context.Context, userID string) (*UserDetail, 
 	// Joined seats only: an invitation not yet accepted gives no access.
 	// An empty list, not null, when there are none.
 	memberships := []*model.Seat{}
-	if err := s.DB.NewSelect().Model(&memberships).
+	mq := s.DB.NewSelect().Model(&memberships).
 		Relation("License").Relation("License.Product").Relation("License.Plan").
 		Where("seat.accepted_at IS NOT NULL AND seat.removed_at IS NULL").
 		Where("(seat.user_id = ? OR lower(seat.email) = ?)", userID, normalizeEmail(user.Email)).
 		Where("NOT (coalesce(license.user_id, '') = ? OR lower(license.email) = ?)", userID, normalizeEmail(user.Email)).
-		OrderExpr("seat.accepted_at DESC").
-		Scan(ctx); err != nil {
+		OrderExpr("seat.accepted_at DESC")
+	if tenantID != "" {
+		mq = mq.Where("seat.tenant_id = ?", tenantID)
+	}
+	if err := mq.Scan(ctx); err != nil {
 		return nil, err
 	}
 	detail.Memberships = memberships
@@ -818,15 +893,21 @@ func (s *Store) GetUserDetail(ctx context.Context, userID string) (*UserDetail, 
 	sq := s.DB.NewSelect().TableExpr("seats").
 		Where("(user_id = ? OR lower(email) = ?)", userID, normalizeEmail(user.Email)).
 		Where("removed_at IS NULL")
+	if tenantID != "" {
+		sq = sq.Where("tenant_id = ?", tenantID)
+	}
 	activeSeats, _ := sq.Count(ctx)
 	detail.ActiveSeats = activeSeats
 
 	var auditLogs []*model.AuditLog
-	_ = s.DB.NewSelect().Model(&auditLogs).
+	aq := s.DB.NewSelect().Model(&auditLogs).
 		Where("actor_id = ?", userID).
 		OrderExpr("created_at DESC").
-		Limit(20).
-		Scan(ctx)
+		Limit(20)
+	if tenantID != "" {
+		aq = aq.Where("tenant_id = ?", tenantID)
+	}
+	_ = aq.Scan(ctx)
 	detail.AuditLogs = auditLogs
 
 	if detail.Licenses == nil {

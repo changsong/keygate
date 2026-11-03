@@ -32,7 +32,7 @@ func (h *WebhookAdminHandler) ListWebhooks(c *gin.Context) {
 		return
 	}
 	page := listPage(c)
-	webhooks, total, err := h.Store.ListWebhooks(c, productID, c.Query("search"), page)
+	webhooks, total, err := h.Store.ListWebhooks(c, tenantID(c), productID, c.Query("search"), page)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -68,7 +68,7 @@ func (h *WebhookAdminHandler) CreateWebhook(c *gin.Context) {
 	if !requireKeyProductScope(c, req.ProductID) {
 		return
 	}
-	if _, err := h.Store.FindProductByID(c, req.ProductID); err != nil {
+	if _, err := h.Store.FindProductForTenant(c, tenantID(c), req.ProductID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			response.NotFound(c, "product not found")
 			return
@@ -78,6 +78,7 @@ func (h *WebhookAdminHandler) CreateWebhook(c *gin.Context) {
 	}
 
 	w := &model.Webhook{
+		TenantID:  tenantID(c),
 		ProductID: req.ProductID,
 		URL:       req.URL,
 		Secret:    req.Secret,
@@ -200,7 +201,7 @@ func webhookTarget(raw string) string {
 // webhooks that belong to another product. Same pattern as
 // AdminHandler.checkLicenseScope / ReleaseAdminHandler.checkReleaseScope.
 func (h *WebhookAdminHandler) checkWebhookScope(c *gin.Context, webhookID string) (*model.Webhook, bool) {
-	w, err := h.Store.FindWebhookByID(c, webhookID)
+	w, err := h.Store.FindWebhookForTenant(c, tenantID(c), webhookID)
 	if err != nil {
 		response.NotFound(c, "webhook not found")
 		return nil, false

@@ -215,7 +215,15 @@ security: []
 
 tags:
   - name: License
-    description: Activate, verify, and deactivate licenses
+    description: |
+      Activate, verify, and deactivate licenses.
+
+      With multi-tenancy on, a request to a workspace's own host
+      (`<slug>.<root domain>`) serves only keys that belong to that
+      workspace: another workspace's key answers the same `404
+      LICENSE_NOT_FOUND` as one that does not exist. Requests to the bare
+      root domain resolve the workspace from the key alone, so a client
+      that only knows `BASE_URL` keeps working.
   - name: Entitlements
     description: Check feature access for a license
   - name: Usage
@@ -288,7 +296,13 @@ paths:
                         description: An http(s) URL or a path starting with `/`.
                       base_url:
                         type: string
-                        description: The server's BASE_URL, the address clients reach it at. The dashboard builds the feed URLs it shows from it.
+                        description: The public origin serving this workspace — the tenant subdomain when multi-tenancy is on, otherwise BASE_URL. The dashboard builds the feed URLs it shows from it.
+                      tenant:
+                        type: object
+                        description: The workspace the request host resolved to.
+                        properties:
+                          slug: { type: string }
+                          name: { type: string }
                       attribution_text:
                         type: string
                         description: Attribution notice, "Powered by Keygate". Required by the license.
@@ -1403,6 +1417,46 @@ paths:
             when Stripe is not configured).
           content: { text/plain: { schema: { type: string } } }
 
+  /webhook/casdoor:
+    post:
+      tags: [Auth]
+      summary: Receive Casdoor identity events
+      description: |
+        Casdoor's deliveries for `new-user`, `add-user`, `signup`,
+        `login`, `update-user` and `delete-user`. Casdoor does not sign
+        its webhooks, so the static `X-Keygate-Webhook-Secret` header
+        must equal `CASDOOR_WEBHOOK_SECRET`; the route answers 404 when
+        either the provider or the secret is unset. A delivery is
+        deduplicated by a hash of its body, so a retry is a no-op. A
+        deletion is audited only: Keygate never deletes an account or a
+        license because Casdoor did.
+      parameters:
+        - name: X-Keygate-Webhook-Secret
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Processed, skipped, ignored or already processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [processed, skipped, ignored, already_processed] }
+        "400":
+          description: "`BAD_REQUEST`: malformed payload or missing action"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401":
+          description: "`UNAUTHORIZED`: the shared secret header is missing or wrong"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: Casdoor webhooks are not configured
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          description: Transient failure; the claim is released so Casdoor's retry runs again
+
   /checkout/verify:
     get:
       tags: [Checkout]
@@ -1477,8 +1531,124 @@ paths:
                       dev_login:
                         type: boolean
                         description: True only on a development install, where `POST /auth/dev-login` signs in without a code
+                      casdoor:
+                        type: object
+                        description: Present only when the Casdoor provider is configured
+                        properties:
+                          enabled: { type: boolean }
+                          display_name: { type: string }
+                          login_url: { type: string }
         "429":
           $ref: "#/components/responses/RateLimited"
+
+  /auth/casdoor/login:
+    get:
+      tags: [Auth]
+      summary: Start Casdoor sign-in (OIDC authorization code)
+      description: |
+        Redirects to Casdoor with PKCE S256, a nonce and a single-use
+        signed state cookie. `next` must be a site-relative path and
+        defaults to `/portal`. Answers 404 when Casdoor is not configured.
+      parameters:
+        - name: next
+          in: query
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to Casdoor, or to `/login?casdoor_error=...` when the flow cannot start
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /auth/casdoor/callback:
+    get:
+      tags: [Auth]
+      summary: Finish Casdoor sign-in
+      description: |
+        Verifies state, nonce and the ID token, requires userinfo's `sub`
+        to match the token's, then links the Casdoor subject to a Keygate
+        account and binds that account's unowned licenses and seats.
+        `email_verified` is required before an address is matched or an
+        account created. On success sets the session cookies and
+        redirects to `next`; failures redirect to `/login?casdoor_error=`
+        with one fixed code (`email_unverified`, `not_allowed`,
+        `identity_conflict`, `unavailable`).
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: Redirect to the portal or the login page
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /auth/casdoor/exchange:
+    post:
+      tags: [Auth]
+      summary: Trade a Casdoor token for a Keygate session (desktop)
+      description: |
+        A desktop client that obtained a Casdoor token directly (device
+        flow or loopback PKCE) presents it here and receives a Keygate
+        JWT (24 hours) and refresh token (30 days) in JSON instead of
+        cookies. Supply `access_token` (verified through Casdoor's
+        userinfo endpoint) or `id_token` (signature, issuer and expiry
+        verified; its audience must be one of
+        `CASDOOR_DESKTOP_CLIENT_IDS`). `email_verified` is required
+        unless the subject is already linked. 10 requests per minute.
+
+        Use the JWT as `Authorization: Bearer` on customer endpoints.
+        Renew by posting the refresh token in the body of
+        `POST /auth/refresh`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                access_token: { type: string }
+                id_token: { type: string }
+      responses:
+        "200":
+          description: Session issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      access_token: { type: string }
+                      token_type: { type: string, enum: [Bearer] }
+                      expires_in: { type: integer, example: 86400 }
+                      refresh_token: { type: string }
+                      user:
+                        type: object
+                        properties:
+                          id: { type: string, format: uuid }
+                          email: { type: string, format: email }
+                          name: { type: string }
+                          avatar_url: { type: string }
+                          is_admin: { type: boolean }
+                          role: { type: string, enum: [owner, admin, user] }
+        "400":
+          description: "`BAD_REQUEST`: neither token supplied, or `id_token` login is not configured"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401":
+          description: "`UNAUTHORIZED`: the token is invalid or its audience is not accepted"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403":
+          description: "`FORBIDDEN`: email not verified, or the account may not sign in"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`IDENTITY_CONFLICT`: this email is linked to a different Casdoor account"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          description: "`PROVIDER_UNAVAILABLE`: Casdoor could not be reached; retry later"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   /auth/otp/send:
     post:
@@ -1582,15 +1752,26 @@ paths:
       description: |
         Exchanges the `refresh_token` cookie (sent only to this path) for
         a new `session` cookie and a new refresh token; the presented one
-        is rotated out. Presenting a refresh token that was already
-        rotated is treated as theft: every refresh token of the user is
-        revoked and the cookie cleared. Own rate limit bucket
+        is rotated out. A client without cookies (a desktop app) may
+        instead post `{"refresh_token": "..."}` and receives the new JWT
+        and refresh token in JSON, no `Set-Cookie`. Presenting a refresh
+        token that was already rotated is treated as theft: every refresh
+        token of the user is revoked. Own rate limit bucket
         (`RATE_LIMIT_AUTH` per minute).
       security:
         - RefreshCookie: []
+      requestBody:
+        required: false
+        description: Desktop clients only; omit when the cookie is present
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
       responses:
         "200":
-          description: Renewed; `Set-Cookie` for `session` and `refresh_token`
+          description: Renewed; `Set-Cookie` for `session` and `refresh_token`, or JSON tokens for the body path
           content:
             application/json:
               schema:
@@ -1601,6 +1782,11 @@ paths:
                     type: object
                     properties:
                       status: { type: string, enum: [refreshed] }
+                      access_token: { type: string, description: Body path only }
+                      token_type: { type: string, enum: [Bearer] }
+                      expires_in: { type: integer, example: 86400 }
+                      refresh_token: { type: string, description: Body path only }
+                      user: { type: object, description: Body path only }
         "401":
           description: "`UNAUTHORIZED`: no, unknown, expired or reused refresh token, or the user is gone"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -3014,6 +3200,59 @@ paths:
           description: "`RENEWAL_UNAVAILABLE`: the plan's renewal price cannot be sold (unreadable, recurring or archived in Stripe); retrying will not help until an admin fixes it"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /portal/licenses/claim:
+    post:
+      tags: [Portal, License]
+      summary: Attach a license to the signed-in account by entering its key
+      description: |
+        The key proves ownership: an unowned license is bound to the
+        caller, and a member key binds the caller to its seat. A license
+        another account already holds is refused; claiming one the caller
+        already holds is idempotent. Unknown keys answer the same 404 as
+        keys the caller cannot claim, so the endpoint does not reveal
+        which licenses exist, and the audit records the license but never
+        the key. Needs a signed-in account; 10 requests per minute.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [license_key]
+              properties:
+                license_key: { type: string }
+      responses:
+        "200":
+          description: Claimed, or the caller already held it
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, enum: [claimed, already_owned, already_member] }
+                      license_id: { type: string, format: uuid }
+        "400":
+          description: "`BAD_REQUEST`: missing key or malformed body"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401":
+          description: "`UNAUTHORIZED`: not signed in"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`LICENSE_NOT_FOUND`: no such key, or it belongs to another account and is not a member key of the caller"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`LICENSE_ALREADY_CLAIMED`: another account holds this license; an admin can reassign it"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
   /portal/licenses/upgrade:
     post:
       tags: [Portal, License]
@@ -3938,6 +4177,101 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "429":
           $ref: "#/components/responses/RateLimited"
+
+  /admin/licenses/{id}/owner:
+    post:
+      tags: [Admin Licenses]
+      summary: Bind a license to the account that should see it in the portal
+      description: |
+        Resolves the account by `user_id` or `email` without creating one,
+        then sets the license's owner. Only an unowned license or the
+        account already holding it is accepted; reassigning one held by
+        another account needs the override action. The billing address
+        (`licenses.email`) is not changed. Audited as `bind_owner`.
+      x-required-scopes: [admin, "licenses:write"]
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LicenseID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id: { type: string, format: uuid }
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: Bound (or already bound to that account)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, enum: [bound, already_bound] }
+                      license_id: { type: string, format: uuid }
+                      user_id: { type: string, format: uuid }
+        "400":
+          description: "`BAD_REQUEST`: neither `user_id` nor `email` supplied"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`NOT_FOUND`: no such license or account"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`LICENSE_ALREADY_CLAIMED`: another account holds this license; use the override action"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /admin/licenses/{id}/owner/override:
+    post:
+      tags: [Admin Licenses]
+      summary: Reassign a license another account already holds
+      description: |
+        Administrator only. Moves portal access to the resolved account,
+        so the previous account loses it immediately; the billing address
+        is unchanged. Audited as `reassign_owner` with both sides.
+      x-required-scopes: [admin]
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LicenseID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id: { type: string, format: uuid }
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: Reassigned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, enum: [reassigned] }
+                      license_id: { type: string, format: uuid }
+                      user_id: { type: string, format: uuid }
+        "400":
+          description: "`BAD_REQUEST`: neither `user_id` nor `email` supplied"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`NOT_FOUND`: no such license or account"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   /admin/licenses/{id}/change-plan:
     post:
@@ -5503,6 +5837,317 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /me:
+    get:
+      tags: [Session]
+      summary: The signed-in account in this context
+      description: |
+        Who the request is, on a tenant host and on the platform console
+        alike. On a tenant host the payload reports this account's place
+        in the workspace; on PLATFORM_HOST there is no tenant and
+        `is_platform` is true. `is_admin` is true for a platform admin or
+        a tenant owner/admin, so the dashboard's guard follows the same
+        rule the API enforces.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        "200":
+          description: The account
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      email: { type: string, format: email }
+                      name: { type: string }
+                      avatar_url: { type: string }
+                      is_admin: { type: boolean, description: Platform admin or tenant owner/admin }
+                      role: { type: string, enum: [owner, admin, user], description: Platform role }
+                      is_platform: { type: boolean }
+                      is_platform_admin: { type: boolean }
+                      is_member: { type: boolean }
+                      is_tenant_admin: { type: boolean }
+                      tenant_role: { type: string, enum: [owner, admin, member, ""] }
+                      tenant:
+                        type: object
+                        properties:
+                          id: { type: string, format: uuid }
+                          slug: { type: string }
+                          name: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/tenants:
+    get:
+      tags: [Session]
+      summary: Workspaces this account belongs to
+      description: The workspace switcher on the platform host.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        "200":
+          description: The memberships
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      tenants:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            slug: { type: string }
+                            name: { type: string }
+                            status: { type: string, enum: [active, suspended] }
+                            role: { type: string, enum: [owner, admin, member] }
+                            base_url: { type: string }
+                      total: { type: integer }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /platform/tenants:
+    get:
+      tags: [Platform]
+      summary: List workspaces
+      description: Reachable only on PLATFORM_HOST by a platform admin.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Every workspace with its counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      tenants:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            slug: { type: string }
+                            name: { type: string }
+                            status: { type: string, enum: [active, suspended] }
+                            created_at: { type: string, format: date-time }
+                            updated_at: { type: string, format: date-time }
+                            member_count: { type: integer }
+                            license_count: { type: integer }
+                      total: { type: integer }
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "404":
+          description: Not the platform host
+
+    post:
+      tags: [Platform]
+      summary: Open a workspace
+      description: |
+        Creates the workspace, its default settings and the owner's
+        membership. The owner account is created as a placeholder when
+        the address is not known yet.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, name, owner_email]
+              properties:
+                slug:
+                  type: string
+                  description: 2–32 lower-case letters, digits or hyphens; becomes the subdomain.
+                name: { type: string }
+                owner_email: { type: string, format: email }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      tenant: { type: object }
+                      owner: { type: object }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: "`TENANT_EXISTS`: the slug is already taken"
+
+  /platform/tenants/{id}:
+    get:
+      tags: [Platform]
+      summary: One workspace
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlatformTenantID"
+      responses:
+        "200":
+          description: The workspace and its counts
+        "404":
+          description: No such workspace
+
+    patch:
+      tags: [Platform]
+      summary: Rename or suspend a workspace
+      description: A suspended workspace refuses sign-ins until activated again.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlatformTenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                status: { type: string, enum: [active, suspended] }
+      responses:
+        "200":
+          description: The updated workspace
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: No such workspace
+
+  /platform/tenants/{id}/members:
+    get:
+      tags: [Platform]
+      summary: Members of a workspace
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlatformTenantID"
+      responses:
+        "200":
+          description: The members, with their workspace role
+
+    post:
+      tags: [Platform]
+      summary: Add a member
+      description: A placeholder global account is created for an address not seen yet.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlatformTenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [owner, admin, member], default: member }
+      responses:
+        "200":
+          description: The membership
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /platform/tenants/{id}/members/{user_id}:
+    patch:
+      tags: [Platform]
+      summary: Change a member's role
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlatformTenantID"
+        - $ref: "#/components/parameters/PlatformUserID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [owner, admin, member] }
+      responses:
+        "200":
+          description: The new role
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+    delete:
+      tags: [Platform]
+      summary: Remove a membership
+      description: The global account stays; only its place in this workspace goes.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PlatformTenantID"
+        - $ref: "#/components/parameters/PlatformUserID"
+      responses:
+        "200":
+          description: Removed
+
+  /platform/settings:
+    get:
+      tags: [Platform]
+      summary: Platform-wide settings
+      description: The defaults tenants inherit unless they override them. Secrets are reported as set or not, never returned.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        "200":
+          description: The settings
+
+    put:
+      tags: [Platform]
+      summary: Write platform-wide settings
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+      responses:
+        "200":
+          description: Saved
+        "400":
+          description: An unknown setting or an invalid enum value
+
 webhooks:
   # Every event Keygate posts. Each delivery is a POST of
   # application/json with the WebhookPayload envelope; see the
@@ -6331,6 +6976,18 @@ components:
       required: true
       description: Delivery id; must belong to the endpoint in the path
       schema: { type: string, format: uuid }
+    PlatformTenantID:
+      in: path
+      name: id
+      required: true
+      description: Workspace id
+      schema: { type: string, format: uuid }
+    PlatformUserID:
+      in: path
+      name: user_id
+      required: true
+      description: Global account id
+      schema: { type: string, format: uuid }
     PageLimit:
       in: query
       name: limit
@@ -6430,6 +7087,12 @@ components:
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     PortalBodyTooLarge:
       description: "`BODY_TOO_LARGE`: the body is over 64 KiB"
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    BadRequest:
+      description: The request body or one of its fields is invalid.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Unauthorized:
+      description: "`UNAUTHORIZED`: no session, or it is invalid or expired"
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     AdminUnauthorized:
       description: |

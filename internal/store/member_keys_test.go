@@ -491,7 +491,7 @@ func TestListLicensesByEmail_LeavesOutPendingInvites(t *testing.T) {
 
 	has := func(email string) bool {
 		t.Helper()
-		ls, err := s.ListLicensesByEmail(ctx, email)
+		ls, err := s.ListLicensesByEmail(ctx, "", email)
 		if err != nil {
 			t.Fatal(err)
 		}

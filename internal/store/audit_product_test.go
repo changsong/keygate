@@ -61,7 +61,7 @@ func TestAuditLinesCarryTheirProduct(t *testing.T) {
 	var logs []*model.AuditLog
 	for range 30 {
 		var err error
-		if logs, _, err = s.ListAuditLogs(ctx, "", "", lic.ProductID, 0, 50); err != nil {
+		if logs, _, err = s.ListAuditLogs(ctx, "", "", "", lic.ProductID, 0, 50); err != nil {
 			t.Fatal(err)
 		}
 		if len(logs) >= 3 {

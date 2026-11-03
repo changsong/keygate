@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ import (
 	"github.com/stripe/stripe-go/v82/subscription"
 	"github.com/stripe/stripe-go/v82/webhook"
 
+	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/service"
 	"github.com/tabloy/keygate/internal/store"
@@ -111,7 +113,7 @@ func (h *StripeHandler) CheckoutByPlan(c *gin.Context) {
 		return
 	}
 
-	plan, err := h.Store.FindPlanByCheckoutID(c, checkoutID)
+	plan, err := h.Store.FindPlanByCheckoutIDForTenant(c, middleware.TenantIDFrom(c), checkoutID)
 	if err != nil || plan == nil {
 		c.String(http.StatusNotFound, "plan not found")
 		return
@@ -136,14 +138,29 @@ func (h *StripeHandler) CheckoutByPlan(c *gin.Context) {
 		return
 	}
 
+	base := tenantBaseURL(c, h.BaseURL)
+
 	if plan.StripePriceID == "" {
 		// A free plan the operator opened for self sign-up takes the
 		// visitor to its form; the form's API re-checks the plan.
 		if plan.SelfSignup {
-			c.Redirect(http.StatusFound, h.BaseURL+"/signup/"+checkoutID)
+			c.Redirect(http.StatusFound, base+"/signup/"+checkoutID)
 			return
 		}
 		c.String(http.StatusServiceUnavailable, "payment not configured for this plan")
+		return
+	}
+
+	// Buying needs an account: the licence is bound to it, so the key
+	// works under whatever address the customer signs in with later.
+	// The free self sign-up above stays anonymous.
+	buyer := middleware.IdentityFrom(c)
+	if buyer.UserID == "" {
+		next := "/pay/" + checkoutID
+		if requested > 0 {
+			next += "?quantity=" + strconv.Itoa(requested)
+		}
+		c.Redirect(http.StatusFound, base+"/login?next="+url.QueryEscape(next))
 		return
 	}
 
@@ -167,15 +184,31 @@ func (h *StripeHandler) CheckoutByPlan(c *gin.Context) {
 	params := &stripe.CheckoutSessionParams{
 		Mode:                stripe.String(mode),
 		LineItems:           []*stripe.CheckoutSessionLineItemParams{item},
-		SuccessURL:          stripe.String(h.BaseURL + "/checkout/success?session_id={CHECKOUT_SESSION_ID}"),
-		CancelURL:           stripe.String(h.BaseURL + "/pricing"),
+		SuccessURL:          stripe.String(base + "/checkout/success?session_id={CHECKOUT_SESSION_ID}"),
+		CancelURL:           stripe.String(base + "/pricing"),
 		AllowPromotionCodes: stripe.Bool(true),
 	}
 	params.Metadata = map[string]string{
 		"plan_id":       plan.ID,
 		"product_id":    plan.ProductID,
+		metaTenant:      planTenantID(plan),
 		metaUpdatesDays: strconv.Itoa(plan.UpdatesDays),
 		metaLicenseType: plan.LicenseType,
+		"user_id":       buyer.UserID,
+	}
+	if buyer.Email != "" {
+		params.Metadata["email"] = buyer.Email
+	}
+	// The subscription carries the buyer too: its later events (sync,
+	// change, upgrade) find the licence by it when the session's own
+	// metadata is not at hand.
+	if mode == string(stripe.CheckoutSessionModeSubscription) {
+		params.SubscriptionData = &stripe.CheckoutSessionSubscriptionDataParams{
+			Metadata: map[string]string{"user_id": buyer.UserID, metaTenant: planTenantID(plan)},
+		}
+		if buyer.Email != "" {
+			params.SubscriptionData.Metadata["email"] = buyer.Email
+		}
 	}
 
 	s, err := session.New(params)
@@ -631,6 +664,41 @@ func sessionPaid(status string) bool {
 	return status == "paid" || status == "no_payment_required"
 }
 
+// planTenantID is the workspace a plan belongs to. Rows written before
+// multi-tenancy read as empty and belong to the default tenant.
+func planTenantID(plan *model.Plan) string {
+	if plan != nil && plan.TenantID != "" {
+		return plan.TenantID
+	}
+	return model.DefaultTenantID
+}
+
+// tenantBaseURL is the origin to build a redirect with: the request's
+// tenant subdomain, or the configured BaseURL where the resolver left
+// none (single-tenant installs, webhook-originated requests).
+func tenantBaseURL(c *gin.Context, fallback string) string {
+	if base := middleware.TenantBaseURLFrom(c); base != "" {
+		return strings.TrimRight(base, "/")
+	}
+	return strings.TrimRight(fallback, "/")
+}
+
+// licenseInTenant is the workspace bound on a licence fetched by ID.
+// Ownership alone is not enough: an account that owns licences in two
+// workspaces must not reach one through the other's host. A request
+// with no tenant (webhooks, platform-wide work) is not bound.
+func licenseInTenant(c *gin.Context, lic *model.License) bool {
+	tenant := middleware.TenantIDFrom(c)
+	if tenant == "" || lic == nil {
+		return true
+	}
+	id := lic.TenantID
+	if id == "" {
+		id = model.DefaultTenantID
+	}
+	return id == tenant
+}
+
 // sessionEmail prefers the email Stripe attached to the session and
 // falls back to the address typed during Checkout — guest checkouts
 // on Payment Links carry only the latter.
@@ -731,6 +799,29 @@ func (h *StripeHandler) fulfillCheckout(ctx context.Context, email, customerID, 
 		return false, nil
 	}
 
+	// The account that opened the checkout owns the licence. Keygate's
+	// own sessions carry it; for one opened elsewhere (a Payment Link,
+	// or a session from before the stamp) the address decides, as it
+	// always did. A buyer id that no longer resolves falls back too
+	// rather than leaving the sale pending forever.
+	buyerID := ""
+	if metadata != nil {
+		if uid := strings.TrimSpace(metadata["user_id"]); uid != "" {
+			if u, uerr := h.Store.FindUserByID(ctx, uid); uerr == nil {
+				buyerID = u.ID
+			} else if !errors.Is(uerr, sql.ErrNoRows) {
+				return false, fmt.Errorf("find buyer %s: %w", uid, uerr)
+			}
+		}
+	}
+	if buyerID == "" {
+		// Ensure user record exists so they appear in Customers.
+		_ = h.Store.UpsertUser(ctx, &model.User{Email: email})
+		if u, uerr := h.Store.FindUserByEmail(ctx, email); uerr == nil {
+			buyerID = u.ID
+		}
+	}
+
 	// The key is made before the claim, like the lookups above: a
 	// failure here leaves the session unclaimed for the next attempt.
 	key, err := h.Store.NewLicenseKey(ctx, plan.ProductID)
@@ -763,8 +854,10 @@ func (h *StripeHandler) fulfillCheckout(ctx context.Context, email, customerID, 
 		status = model.StatusTrialing
 	}
 	lic := &model.License{
+		TenantID:         planTenantID(plan),
 		ProductID:        plan.ProductID,
 		PlanID:           plan.ID,
+		UserID:           buyerID,
 		Email:            email,
 		LicenseKey:       key,
 		PaymentProvider:  "stripe",
@@ -896,9 +989,6 @@ func (h *StripeHandler) fulfillCheckout(ctx context.Context, email, customerID, 
 	lic.StripePaymentIntentID = paymentIntentID
 	lic.StripeCheckoutSessionID = sessionID
 
-	// Ensure user record exists so they appear in Customers
-	_ = h.Store.UpsertUser(ctx, &model.User{Email: email})
-
 	err = h.Store.CreateLicenseWithSubscription(ctx, lic, plan)
 	if errors.Is(err, store.ErrPlanChanged) {
 		// The plan was retyped between resolving it and this write.
@@ -961,10 +1051,17 @@ func (h *StripeHandler) fulfillCheckout(ctx context.Context, email, customerID, 
 		// earlier unpaid completion or a racing worker goes away.
 		_ = h.Store.DeleteProcessedEvent(ctx, pendingSessionProvider, sessionID)
 	}
-	// Link license to user
-	if u, err := h.Store.FindUserByEmail(ctx, email); err == nil {
-		lic.UserID = u.ID
-		_ = h.Store.UpdateLicenseUser(ctx, lic.ID, u.ID)
+	// The buyer was resolved before the insert and written with the
+	// licence; a post-insert update would overwrite an explicit binding.
+
+	// A completed purchase makes the buyer a member of the workspace it
+	// was made in: the licence is theirs and the portal is where they
+	// manage it.
+	if buyerID != "" {
+		if merr := h.Store.EnsureTenantMember(ctx, lic.TenantID, buyerID); merr != nil {
+			slog.Warn("stripe checkout: could not add the buyer to the workspace",
+				"tenant_id", lic.TenantID, "user_id", buyerID, "error", merr)
+		}
 	}
 
 	// One product read for both the name and the download page.
@@ -987,7 +1084,7 @@ func (h *StripeHandler) fulfillCheckout(ctx context.Context, email, customerID, 
 			// The same template an admin edits under Settings — a Stripe
 			// purchase used to get a hard-coded copy that ignored it (and
 			// the product's download link).
-			subject, body = h.Email.RenderLicenseCreated(productName, plan.Name, displayKey, downloadURL)
+			subject, body = h.Email.RenderLicenseCreatedFor(lic.TenantID, productName, plan.Name, displayKey, downloadURL)
 		} else {
 			body = fmt.Sprintf(`<!DOCTYPE html>
 <html><body style="font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -1002,8 +1099,8 @@ func (h *StripeHandler) fulfillCheckout(ctx context.Context, email, customerID, 
 
 	h.Store.Audit(ctx, &model.AuditLog{
 		Entity: "license", EntityID: lic.ID, Action: "created",
-		ActorType: source,
-		Changes:   map[string]any{"provider": "stripe", "email": email, "plan": plan.Name},
+		ActorType: source, TenantID: lic.TenantID,
+		Changes: map[string]any{"provider": "stripe", "email": email, "plan": plan.Name},
 	})
 
 	if h.WebhookSvc != nil {
@@ -1039,6 +1136,29 @@ func (h *StripeHandler) VerifyCheckoutSession(c *gin.Context) {
 	if err != nil {
 		response.BadRequest(c, "invalid session")
 		return
+	}
+
+	// A checkout belongs to one workspace. The success page reached on
+	// another tenant's host must not see — or fulfil — it: sessions made
+	// before the stamp have no tenant metadata, so those are judged by
+	// the licence the session produced.
+	if tenant := middleware.TenantIDFrom(c); tenant != "" {
+		if st := sess.Metadata[metaTenant]; st != "" {
+			if st != tenant {
+				response.NotFound(c, "checkout not found")
+				return
+			}
+		} else {
+			lic, lerr := h.Store.FindLicenseByStripeCheckoutSession(c.Request.Context(), sess.ID)
+			switch {
+			case lerr == nil && lic.TenantID != "" && lic.TenantID != tenant:
+				response.NotFound(c, "checkout not found")
+				return
+			case lerr != nil && !errors.Is(lerr, sql.ErrNoRows):
+				response.Internal(c, lerr)
+				return
+			}
+		}
 	}
 
 	if !sessionPaid(string(sess.PaymentStatus)) {
@@ -2643,6 +2763,9 @@ const (
 	kindRenewal     = "renewal"
 	metaLicenseID   = "license_id"
 	metaRenewalDays = "renewal_days"
+	// metaTenant names the workspace the checkout was sold in, so a
+	// success page on another tenant's host can refuse to look at it.
+	metaTenant = "tenant_id"
 	// metaUpdatesDays freezes the update period a purchase includes,
 	// as the plan read when the session was created. The plan may be
 	// edited before the payment settles; the customer gets what was
@@ -2752,6 +2875,7 @@ func (h *StripeHandler) fulfillRenewal(ctx context.Context, metadata map[string]
 	}
 
 	renewal := &model.LicenseRenewal{
+		TenantID:                lic.TenantID,
 		LicenseID:               lic.ID,
 		StripeCheckoutSessionID: sessionID,
 		StripePaymentIntentID:   paymentIntentID,
@@ -2875,11 +2999,13 @@ func (h *StripeHandler) RenewUpdates(c *gin.Context) {
 		response.NotFound(c, "license not found")
 		return
 	}
-	// Ownership is by address, case-insensitively: the session email
-	// is normalised to lower case at login while fulfilment stores
-	// the address as Stripe sent it.
-	emailVal, _ := c.Get("email")
-	if e, ok := emailVal.(string); !ok || !strings.EqualFold(lic.Email, e) {
+	if !licenseInTenant(c, lic) {
+		response.NotFound(c, "license not found")
+		return
+	}
+	// Ownership is by the signed-in identity: a bound licence admits its
+	// user_id alone, an unbound one its email (see License.OwnedBy).
+	if !lic.OwnedBy(middleware.IdentityFrom(c)) {
 		response.Forbidden(c, "not your license")
 		return
 	}
@@ -2943,8 +3069,8 @@ func (h *StripeHandler) RenewUpdates(c *gin.Context) {
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{Price: stripe.String(plan.StripeRenewalPriceID), Quantity: stripe.Int64(1)},
 		},
-		SuccessURL:          stripe.String(h.BaseURL + "/checkout/success?session_id={CHECKOUT_SESSION_ID}"),
-		CancelURL:           stripe.String(h.BaseURL + "/portal"),
+		SuccessURL:          stripe.String(tenantBaseURL(c, h.BaseURL) + "/checkout/success?session_id={CHECKOUT_SESSION_ID}"),
+		CancelURL:           stripe.String(tenantBaseURL(c, h.BaseURL) + "/portal"),
 		AllowPromotionCodes: stripe.Bool(true),
 	}
 	if lic.StripeCustomerID != "" {
@@ -2957,6 +3083,7 @@ func (h *StripeHandler) RenewUpdates(c *gin.Context) {
 		metaLicenseID:   lic.ID,
 		metaRenewalDays: strconv.Itoa(plan.RenewalDays),
 		"product_id":    lic.ProductID,
+		metaTenant:      lic.TenantID,
 	}
 	// The charge inherits the payment intent's metadata, so a
 	// charge.refunded that arrives before the renewal is applied can
@@ -2988,9 +3115,12 @@ func (h *StripeHandler) CancelSubscription(c *gin.Context) {
 		response.NotFound(c, "license not found")
 		return
 	}
+	if !licenseInTenant(c, lic) {
+		response.NotFound(c, "license not found")
+		return
+	}
 
-	emailVal, _ := c.Get("email")
-	if e, ok := emailVal.(string); !ok || !strings.EqualFold(lic.Email, e) {
+	if !lic.OwnedBy(middleware.IdentityFrom(c)) {
 		response.Forbidden(c, "not your license")
 		return
 	}
@@ -3408,10 +3538,13 @@ func (h *StripeHandler) CreatePortalSession(c *gin.Context) {
 		response.NotFound(c, "license not found")
 		return
 	}
+	if !licenseInTenant(c, lic) {
+		response.NotFound(c, "license not found")
+		return
+	}
 
 	// Verify ownership
-	emailVal, _ := c.Get("email")
-	if e, ok := emailVal.(string); !ok || !strings.EqualFold(lic.Email, e) {
+	if !lic.OwnedBy(middleware.IdentityFrom(c)) {
 		response.Forbidden(c, "not your license")
 		return
 	}
@@ -3424,7 +3557,7 @@ func (h *StripeHandler) CreatePortalSession(c *gin.Context) {
 	// Stripe sends the customer back to return_url, so only a page of
 	// this site is accepted; anything else falls back to the portal.
 	returnURL := req.ReturnURL
-	base := strings.TrimRight(h.BaseURL, "/")
+	base := tenantBaseURL(c, h.BaseURL)
 	if returnURL != base && !strings.HasPrefix(returnURL, base+"/") {
 		returnURL = base + "/portal"
 	}
@@ -3455,10 +3588,13 @@ func (h *StripeHandler) ListInvoices(c *gin.Context) {
 		response.NotFound(c, "license not found")
 		return
 	}
+	if !licenseInTenant(c, lic) {
+		response.NotFound(c, "license not found")
+		return
+	}
 
 	// Verify ownership
-	emailVal, _ := c.Get("email")
-	if e, ok := emailVal.(string); !ok || !strings.EqualFold(lic.Email, e) {
+	if !lic.OwnedBy(middleware.IdentityFrom(c)) {
 		response.Forbidden(c, "not your license")
 		return
 	}

@@ -72,14 +72,14 @@ func TestIncrementUsageCounterWithLimit_Overflow(t *testing.T) {
 		_, _ = s.DB.NewRaw("DELETE FROM usage_counters WHERE license_id = ?", lic.ID).Exec(ctx)
 	}()
 
-	if _, accepted, err := s.IncrementUsageCounterWithLimit(ctx, lic.ID, "api_calls", "monthly", "2026-09", 10, 0); err != nil || !accepted {
+	if _, accepted, err := s.IncrementUsageCounterWithLimit(ctx, "", lic.ID, "api_calls", "monthly", "2026-09", 10, 0); err != nil || !accepted {
 		t.Fatalf("seed increment: accepted=%v err=%v", accepted, err)
 	}
-	_, _, err := s.IncrementUsageCounterWithLimit(ctx, lic.ID, "api_calls", "monthly", "2026-09", math.MaxInt64, 0)
+	_, _, err := s.IncrementUsageCounterWithLimit(ctx, "", lic.ID, "api_calls", "monthly", "2026-09", math.MaxInt64, 0)
 	if !errors.Is(err, store.ErrUsageQuantityTooLarge) {
 		t.Fatalf("got %v, want ErrUsageQuantityTooLarge", err)
 	}
-	c, accepted, err := s.IncrementUsageCounterWithLimit(ctx, lic.ID, "api_calls", "monthly", "2026-09", 1, 0)
+	c, accepted, err := s.IncrementUsageCounterWithLimit(ctx, "", lic.ID, "api_calls", "monthly", "2026-09", 1, 0)
 	if err != nil || !accepted || c.Used != 11 {
 		t.Fatalf("counter after rejected overflow: used=%d accepted=%v err=%v, want 11", c.Used, accepted, err)
 	}
@@ -99,7 +99,7 @@ func TestIncrementUsageCounterWithLimit_Atomic(t *testing.T) {
 
 	_, _ = s.DB.NewRaw("DELETE FROM usage_counters WHERE license_id = ?", licenseID).Exec(ctx)
 
-	counter, accepted, err := s.IncrementUsageCounterWithLimit(ctx, licenseID, feature, period, periodKey, 10, limit)
+	counter, accepted, err := s.IncrementUsageCounterWithLimit(ctx, "", licenseID, feature, period, periodKey, 10, limit)
 	if err != nil {
 		t.Fatalf("increment failed: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestIncrementUsageCounterWithLimit_Atomic(t *testing.T) {
 		t.Fatalf("expected used=10, got %d", counter.Used)
 	}
 
-	counter, accepted, err = s.IncrementUsageCounterWithLimit(ctx, licenseID, feature, period, periodKey, 90, limit)
+	counter, accepted, err = s.IncrementUsageCounterWithLimit(ctx, "", licenseID, feature, period, periodKey, 90, limit)
 	if err != nil {
 		t.Fatalf("increment failed: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestIncrementUsageCounterWithLimit_Atomic(t *testing.T) {
 		t.Fatalf("expected used=100, got %d", counter.Used)
 	}
 
-	counter, accepted, err = s.IncrementUsageCounterWithLimit(ctx, licenseID, feature, period, periodKey, 1, limit)
+	counter, accepted, err = s.IncrementUsageCounterWithLimit(ctx, "", licenseID, feature, period, periodKey, 1, limit)
 	if err != nil {
 		t.Fatalf("increment failed: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestIncrementUsageCounterWithLimit_Atomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, ok, err := s.IncrementUsageCounterWithLimit(ctx, licenseID, feature, period, periodKey, quantity, limit)
+			_, ok, err := s.IncrementUsageCounterWithLimit(ctx, "", licenseID, feature, period, periodKey, quantity, limit)
 			if err != nil {
 				t.Errorf("concurrent increment failed: %v", err)
 				return
@@ -173,7 +173,7 @@ func TestIncrementUsageCounterWithLimit_Atomic(t *testing.T) {
 	t.Logf("concurrent test passed: used=%d, limit=%d, accepted=%d/%d", finalCounter.Used, limit, acceptedCount, concurrency)
 
 	_, _ = s.DB.NewRaw("DELETE FROM usage_counters WHERE license_id = ?", licenseID).Exec(ctx)
-	counter, accepted, err = s.IncrementUsageCounterWithLimit(ctx, licenseID, feature, period, periodKey, 99999, 0)
+	counter, accepted, err = s.IncrementUsageCounterWithLimit(ctx, "", licenseID, feature, period, periodKey, 99999, 0)
 	if err != nil {
 		t.Fatalf("unlimited increment failed: %v", err)
 	}

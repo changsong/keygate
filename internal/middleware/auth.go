@@ -86,6 +86,55 @@ func SessionAuth(secret string, adminCheck ...AdminChecker) gin.HandlerFunc {
 	}
 }
 
+// OptionalSession fills the identity context when a valid session cookie
+// or bearer JWT is present and continues either way: it never rejects.
+// Routes that need a session use SessionAuth; this is for pages that
+// adapt to who is signed in (the checkout gate on /pay).
+func OptionalSession(secret string, adminCheck ...AdminChecker) gin.HandlerFunc {
+	var checkAdmin AdminChecker
+	if len(adminCheck) > 0 {
+		checkAdmin = adminCheck[0]
+	}
+	return func(c *gin.Context) {
+		raw := extractBearer(c)
+		if raw == "" {
+			if cookie, err := c.Cookie("session"); err == nil && cookie != "" {
+				raw = cookie
+			}
+		}
+		if raw != "" {
+			claims := &Claims{}
+			tok, err := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) {
+				return []byte(secret), nil
+			})
+			if err == nil && tok.Valid {
+				c.Set("user_id", claims.UserID)
+				c.Set("email", claims.Email)
+				c.Set("name", claims.Name)
+				isAdmin := claims.IsAdmin
+				if checkAdmin != nil {
+					isAdmin = checkAdmin(c.Request.Context(), claims.UserID)
+				}
+				c.Set("is_admin", isAdmin)
+			}
+		}
+		c.Next()
+	}
+}
+
+// IdentityFrom builds the ownership identity an authenticated request
+// acts as. SessionAuth has already put user_id and email there.
+func IdentityFrom(c *gin.Context) model.Identity {
+	var id model.Identity
+	if v, ok := c.Get("user_id"); ok {
+		id.UserID, _ = v.(string)
+	}
+	if v, ok := c.Get("email"); ok {
+		id.Email, _ = v.(string)
+	}
+	return id
+}
+
 // SessionOrAPIKey accepts either:
 //
 //   - `Authorization: Bearer kg_live_<token>` — programmatic credential

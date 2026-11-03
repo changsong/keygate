@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tabloy/keygate/internal/casdoor"
 	"github.com/tabloy/keygate/internal/config"
 	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/model"
@@ -51,15 +53,30 @@ func (h *AuthHandler) requestIsHTTPS(c *gin.Context) bool {
 // setSecureCookie sets a cookie with SameSite=Lax for CSRF protection.
 // secure marks it HTTPS-only; see requestIsHTTPS for who may set it.
 func setSecureCookie(c *gin.Context, name, value string, maxAge int, path string, secure, httpOnly bool) {
+	setSecureCookieDomain(c, name, value, maxAge, path, "", secure, httpOnly)
+}
+
+// setSecureCookieDomain is setSecureCookie with an explicit Domain, so a
+// session issued on the platform callback is sent to tenant subdomains
+// too (SESSION_COOKIE_DOMAIN). An empty domain stays host-only.
+func setSecureCookieDomain(c *gin.Context, name, value string, maxAge int, path, domain string, secure, httpOnly bool) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
 		Value:    value,
 		MaxAge:   maxAge,
 		Path:     path,
+		Domain:   domain,
 		Secure:   secure,
 		HttpOnly: httpOnly,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+func (h *AuthHandler) cookieDomain() string {
+	if h.Config == nil {
+		return ""
+	}
+	return h.Config.SessionCookieDomain
 }
 
 type AuthHandler struct {
@@ -67,6 +84,10 @@ type AuthHandler struct {
 	Config  *config.Config
 	Email   *service.EmailService
 	Webhook *service.WebhookService
+	// Casdoor and Identity are nil when CASDOOR_* is not configured;
+	// the provider then stays hidden and its routes answer 404.
+	Casdoor  *casdoor.Client
+	Identity *service.IdentityService
 	// beforeConsumeCode runs between a code matching and it being
 	// marked used. Tests use it to hold several requests in that
 	// window; nil everywhere else.
@@ -85,10 +106,22 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		response.NotFound(c, "user not found")
 		return
 	}
-	response.OK(c, gin.H{
+	out := gin.H{
 		"id": user.ID, "email": user.Email, "name": user.Name,
 		"avatar_url": user.AvatarURL, "is_admin": user.IsAdmin(), "role": user.Role,
-	})
+		// Where the request stands: the platform console has no tenant
+		// and a tenant host reports this account's place in it, so the
+		// same payload serves both the console and a workspace.
+		"is_platform":       middleware.IsPlatformContext(c),
+		"is_platform_admin": c.GetBool("is_platform_admin"),
+		"is_member":         c.GetBool("is_member"),
+		"is_tenant_admin":   c.GetBool("is_tenant_admin"),
+		"tenant_role":       c.GetString("tenant_role"),
+	}
+	if t, ok := middleware.TenantFrom(c); ok {
+		out["tenant"] = gin.H{"id": t.ID, "slug": t.Slug, "name": t.Name}
+	}
+	response.OK(c, out)
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
@@ -104,14 +137,28 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 			ActorType: "user", ActorID: uid, IPAddress: c.ClientIP(),
 		})
 	}
-	setSecureCookie(c, "session", "", -1, "/", h.requestIsHTTPS(c), true)
-	setSecureCookie(c, "refresh_token", "", -1, "/api/v1/auth/refresh", h.requestIsHTTPS(c), true)
+	setSecureCookieDomain(c, "session", "", -1, "/", h.cookieDomain(), h.requestIsHTTPS(c), true)
+	setSecureCookieDomain(c, "refresh_token", "", -1, "/api/v1/auth/refresh", h.cookieDomain(), h.requestIsHTTPS(c), true)
 	response.OK(c, gin.H{"status": "logged_out"})
 }
 
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	raw, err := c.Cookie("refresh_token")
+	fromBody := false
 	if err != nil || raw == "" {
+		// A desktop client has no cookie jar: it presents the refresh
+		// token in the body and gets new tokens back in JSON. The same
+		// rotation and reuse detection runs underneath.
+		fromBody = true
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, casdoorExchangeMaxBody)
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if bindErr := c.ShouldBindJSON(&req); bindErr == nil {
+			raw = strings.TrimSpace(req.RefreshToken)
+		}
+	}
+	if raw == "" {
 		response.Unauthorized(c, "no refresh token")
 		return
 	}
@@ -138,7 +185,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 			"user_id", ren.Token.UserID, "token_id", ren.Token.ID)
 		// Clear the cookie on the client so the next page load
 		// doesn't try the dead token again.
-		setSecureCookie(c, "refresh_token", "", -1, "/api/v1/auth/refresh", h.requestIsHTTPS(c), true)
+		if !fromBody {
+			setSecureCookieDomain(c, "refresh_token", "", -1, "/api/v1/auth/refresh", h.cookieDomain(), h.requestIsHTTPS(c), true)
+		}
 		response.Unauthorized(c, "refresh token reuse detected")
 		return
 	}
@@ -157,9 +206,37 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
+	if fromBody {
+		h.replySessionTokens(c, ren.User, rawRefresh)
+		return
+	}
 	h.issueSessionCookie(c, ren.User)
 	h.setRefreshCookie(c, rawRefresh, ren.ExpiresAt)
 	response.OK(c, gin.H{"status": "refreshed"})
+}
+
+// sessionTTL is how long a Keygate JWT lives; cookies and desktop
+// tokens share it.
+const sessionTTL = 24 * time.Hour
+
+// replySessionTokens answers a cookie-less client (a desktop app) with
+// the same material a browser would receive as cookies.
+func (h *AuthHandler) replySessionTokens(c *gin.Context, user *model.User, rawRefresh string) {
+	token, err := middleware.IssueJWT(h.Config.JWTSecret, user.ID, user.Email, user.Name, user.IsAdmin(), sessionTTL)
+	if err != nil {
+		response.Internal(c, err)
+		return
+	}
+	response.OK(c, gin.H{
+		"access_token":  token,
+		"token_type":    "Bearer",
+		"expires_in":    int(sessionTTL.Seconds()),
+		"refresh_token": rawRefresh,
+		"user": gin.H{
+			"id": user.ID, "email": user.Email, "name": user.Name,
+			"avatar_url": user.AvatarURL, "is_admin": user.IsAdmin(), "role": user.Role,
+		},
+	})
 }
 
 // refreshTokenTTL is how long a refresh token lives.
@@ -176,7 +253,7 @@ func (h *AuthHandler) issueSession(c *gin.Context, user *model.User) {
 // setRefreshCookie sets the refresh cookie to a token expiring at expiresAt.
 func (h *AuthHandler) setRefreshCookie(c *gin.Context, rawRefresh string, expiresAt time.Time) {
 	maxAge := int(time.Until(expiresAt).Seconds())
-	setSecureCookie(c, "refresh_token", rawRefresh, maxAge, "/api/v1/auth/refresh", h.requestIsHTTPS(c), true)
+	setSecureCookieDomain(c, "refresh_token", rawRefresh, maxAge, "/api/v1/auth/refresh", h.cookieDomain(), h.requestIsHTTPS(c), true)
 }
 
 // issueSessionCookie sets the 24-hour session cookie alone.
@@ -187,7 +264,7 @@ func (h *AuthHandler) issueSessionCookie(c *gin.Context, user *model.User) {
 		h.Config.JWTSecret, user.ID, user.Email, user.Name,
 		user.IsAdmin(), 24*time.Hour,
 	)
-	setSecureCookie(c, "session", token, 24*3600, "/", h.requestIsHTTPS(c), true)
+	setSecureCookieDomain(c, "session", token, 24*3600, "/", h.cookieDomain(), h.requestIsHTTPS(c), true)
 }
 
 func hashToken(raw string) string {
@@ -196,7 +273,24 @@ func hashToken(raw string) string {
 }
 
 func (h *AuthHandler) Providers(c *gin.Context) {
-	response.OK(c, gin.H{"dev_login": h.devLoginOpen(c), "otp": true})
+	payload := gin.H{"dev_login": h.devLoginOpen(c), "otp": true}
+	if h.casdoorEnabled() {
+		// The flow starts and ends on the platform host, which is the
+		// one redirect URI the shared Casdoor app registers. A workspace
+		// login names its tenant so the callback knows where to return.
+		loginURL := strings.TrimRight(h.Config.PlatformBaseURL(), "/") + "/api/v1/auth/casdoor/login"
+		if h.Config.TenantEnabled {
+			if slug := middleware.TenantSlugFrom(c); slug != "" {
+				loginURL += "?tenant=" + url.QueryEscape(slug)
+			}
+		}
+		payload["casdoor"] = gin.H{
+			"enabled":      true,
+			"display_name": h.Config.CasdoorDisplayName,
+			"login_url":    loginURL,
+		}
+	}
+	response.OK(c, payload)
 }
 
 // devLoginOpen reports whether this request may use dev-login: the

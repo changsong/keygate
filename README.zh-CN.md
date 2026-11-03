@@ -90,6 +90,27 @@ Stripe 端到端集成，**三层可靠性保障** — Webhook、成功页验证
 
 一个 Go 服务 + PostgreSQL +（可选）S3 兼容存储用于 release 二进制。无需 Redis，无需微服务。启动时自动迁移。首次运行有安装向导。支持自定义品牌、邮件模板和国际化（内置中英文）。
 
+### 🏬 多租户（SaaS）
+
+一个实例可以服务多个客户工作空间。每个工作空间位于 `<slug>.<ROOT_DOMAIN>`，拥有各自的产品、计划、许可证、席位、API key、Webhook、审计日志、账单记录和品牌；一个全局账号可以加入多个工作空间。`PLATFORM_HOST` 上的平台控制台负责开通工作空间、指定所有者、停用工作空间，以及编辑平台级默认设置。
+
+> **注意：** 多租户是一种部署模式，不是默认配置。先备份数据库，再在 `.env` 中开启：
+
+```bash
+TENANT_ENABLED=true
+TENANT_ROOT_DOMAIN=keygate.example.com   # 工作空间位于 <slug>.keygate.example.com
+PLATFORM_HOST=app.keygate.example.com    # 平台控制台，没有租户
+SESSION_COOKIE_DOMAIN=.keygate.example.com
+```
+
+运维要点：
+
+- 把通配 DNS（`*.keygate.example.com`）和通配 TLS 证书指向服务；`PLATFORM_HOST` 必须属于根域。
+- Casdoor 只需登记一个回调地址：`https://app.keygate.example.com/api/v1/auth/casdoor/callback`；登录 state 会带上访客来源的工作空间。
+- Stripe 仍然共享：结账 metadata 记录工作空间，客户按 `(工作空间, 邮箱)` 映射，因此同一账号在 A 工作空间的账单门户不会串出 B 的发票。
+- 桌面端继续使用 license key；key 会反查所属工作空间。在某个工作空间的子域上，key 必须属于该工作空间（别的工作空间的 key 等同于不存在的 key）；根域仍以 key 为准，因此只配置了 `BASE_URL` 的客户端照常工作。
+- 存量部署不受影响：`TENANT_ENABLED=false` 时所有请求都归入迁移时创建的 `default` 工作空间，开启后存量数据会回填到它。
+
 <br />
 
 ## 快速开始

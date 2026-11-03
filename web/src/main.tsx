@@ -3,7 +3,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import { ErrorBoundary } from "@/components/error-boundary"
-import { AdminLayout, PortalLayout } from "@/components/layout"
+import { AdminLayout, PlatformLayout, PortalLayout } from "@/components/layout"
 import { showToast, ToastBridge, ToastProvider } from "@/components/toast"
 import { AuthProvider } from "@/hooks/use-auth"
 import { SiteConfigProvider } from "@/hooks/use-site-config"
@@ -23,10 +23,14 @@ import SettingsPage from "@/pages/admin/settings"
 import WebhooksPage from "@/pages/admin/webhooks"
 import CheckoutSuccessPage from "@/pages/checkout-success"
 import LoginPage from "@/pages/login"
+import PlatformSettingsPage from "@/pages/platform/settings"
+import PlatformTenantDetailPage from "@/pages/platform/tenant-detail"
+import PlatformTenantsPage from "@/pages/platform/tenants"
 import PortalAccountPage from "@/pages/portal/account"
 import PortalLicensesPage from "@/pages/portal/licenses"
 import SetupPage from "@/pages/setup"
 import SignupPage from "@/pages/signup"
+import SpacesPage from "@/pages/spaces"
 import "./index.css"
 
 const queryClient = new QueryClient({
@@ -59,6 +63,15 @@ createRoot(document.getElementById("root")!).render(
                     <Route path="/checkout/success" element={<CheckoutSuccessPage />} />
                     <Route path="/accept-invite" element={<AcceptInvitePage />} />
                     <Route path="/signup/:checkoutId" element={<SignupPage />} />
+                    <Route path="/spaces" element={<SpacesPage />} />
+
+                    {/* Platform console — PLATFORM_HOST only (the API
+                      refuses these routes everywhere else) */}
+                    <Route path="/platform" element={<PlatformLayout />}>
+                      <Route index element={<PlatformTenantsPage />} />
+                      <Route path="tenants/:id" element={<PlatformTenantDetailPage />} />
+                      <Route path="settings" element={<PlatformSettingsPage />} />
+                    </Route>
 
                     {/* Admin */}
                     <Route path="/admin" element={<AdminLayout />}>

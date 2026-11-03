@@ -22,6 +22,7 @@ import (
 	stripeprice "github.com/stripe/stripe-go/v82/price"
 	"github.com/stripe/stripe-go/v82/subscription"
 
+	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/store"
 	"github.com/tabloy/keygate/pkg/response"
@@ -106,8 +107,11 @@ func (h *StripeHandler) resolveChange(c *gin.Context, req changeRequest) (ch *su
 		response.NotFound(c, "license not found")
 		return nil, false
 	}
-	emailVal, _ := c.Get("email")
-	if e, ok := emailVal.(string); !ok || !strings.EqualFold(lic.Email, e) {
+	if !licenseInTenant(c, lic) {
+		response.NotFound(c, "license not found")
+		return nil, false
+	}
+	if !lic.OwnedBy(middleware.IdentityFrom(c)) {
 		response.Forbidden(c, "not your license")
 		return nil, false
 	}
@@ -1150,8 +1154,11 @@ func (h *StripeHandler) PendingSubscriptionChange(c *gin.Context) {
 		response.NotFound(c, "license not found")
 		return
 	}
-	emailVal, _ := c.Get("email")
-	if e, ok := emailVal.(string); !ok || !strings.EqualFold(lic.Email, e) {
+	if !licenseInTenant(c, lic) {
+		response.NotFound(c, "license not found")
+		return
+	}
+	if !lic.OwnedBy(middleware.IdentityFrom(c)) {
 		response.Forbidden(c, "not your license")
 		return
 	}

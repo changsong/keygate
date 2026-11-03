@@ -26,6 +26,7 @@ import (
 	"github.com/stripe/stripe-go/v82"
 
 	"github.com/tabloy/keygate/internal/branding"
+	"github.com/tabloy/keygate/internal/casdoor"
 	"github.com/tabloy/keygate/internal/config"
 	"github.com/tabloy/keygate/internal/crypto"
 	"github.com/tabloy/keygate/internal/handler"
@@ -276,6 +277,19 @@ func main() {
 	webhookSvc := service.NewWebhookService(db, logger, webhookHTTPTimeout, cfg.WebhookMaxAttempts, cfg.WebhookAllowPrivate)
 	emailSvc := service.NewEmailService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, logger, db)
 	emailSvc.SetBaseURL(cfg.BaseURL)
+	// Mail for a workspace links to that workspace's portal. With
+	// multi-tenancy off every tenant resolves to BASE_URL anyway.
+	tenantBaseURL := func(tenantID string) string {
+		if !cfg.TenantEnabled || tenantID == "" || tenantID == model.DefaultTenantID {
+			return cfg.BaseURL
+		}
+		t, err := db.FindTenantByID(context.Background(), tenantID)
+		if err != nil || t == nil {
+			return ""
+		}
+		return cfg.TenantBaseURL(t.Slug)
+	}
+	emailSvc.SetTenantBaseURLResolver(tenantBaseURL)
 	// LICENSE_SIGNING_KEY is a 32-byte ed25519 seed in hex. Parsed
 	// once here so an invalid value fails fast at startup rather
 	// than the first /license/activate call.
@@ -287,6 +301,7 @@ func main() {
 	licenseSvc := service.NewLicenseService(db, licenseSigningPriv, logger, bf, webhookSvc)
 	usageSvc := service.NewUsageService(db, webhookSvc, emailSvc, logger, cfg.QuotaWarningThreshold)
 	seatSvc := service.NewSeatService(db, webhookSvc, emailSvc, logger, cfg.BaseURL)
+	seatSvc.SetTenantBaseURLResolver(tenantBaseURL)
 	entitlementSvc := service.NewEntitlementService(db, logger)
 	floatingSvc := service.NewFloatingService(db, logger)
 
@@ -416,6 +431,16 @@ func main() {
 
 	licenseH := handler.NewLicenseHandler(licenseSvc)
 	authH := &handler.AuthHandler{Store: db, Config: cfg, Email: emailSvc, Webhook: webhookSvc}
+	if cfg.IsCasdoorEnabled() {
+		authH.Casdoor = casdoor.New(casdoor.Config{
+			IssuerURL:    cfg.CasdoorIssuerURL,
+			ClientID:     cfg.CasdoorClientID,
+			ClientSecret: cfg.CasdoorClientSecret,
+			RedirectURL:  cfg.CasdoorRedirectURL,
+		})
+		authH.Identity = service.NewIdentityService(db, logger)
+		logger.Info("casdoor: OIDC login enabled", "issuer", cfg.CasdoorIssuerURL)
+	}
 	stripeH := &payment.StripeHandler{
 		Store:         db,
 		WebhookSecret: cfg.StripeWebhookSecret,
@@ -436,6 +461,7 @@ func main() {
 	}
 	meteredSyncer := service.NewMeteredBillingSyncer(db, logger)
 	adminH := handler.NewAdminHandler(db, webhookSvc, emailSvc, expiryChecker, meteredSyncer)
+	platformH := handler.NewPlatformHandler(db, cfg)
 	// An update period may only be written once the links a public
 	// feed handed out have expired, and this is how long they live.
 	// The admin API and the fulfilment guard measure the same wait
@@ -527,6 +553,14 @@ func main() {
 	}
 
 	go emailSvc.StartEmailQueueProcessor(ctx, db)
+
+	// Daily identity repair against Casdoor. It only links and binds what
+	// already exists — never creates users — and needs the organization
+	// to page through.
+	if cfg.IsCasdoorEnabled() && cfg.CasdoorOrg != "" {
+		reconciler := service.NewCasdoorReconciler(authH.Casdoor, db, authH.Identity, cfg.CasdoorOrg, logger)
+		go reconciler.Start(ctx)
+	}
 
 	go systemH.StartAutoCheck(ctx.Done())
 
@@ -650,7 +684,7 @@ func main() {
 
 	r.Use(func(c *gin.Context) {
 		if origin := c.GetHeader("Origin"); origin != "" {
-			if cfg.IsProduction() && origin != cfg.BaseURL {
+			if !cfg.IsAllowedOrigin(origin) {
 				if c.Request.Method == "OPTIONS" {
 					// Envelope, not an empty 403. A browser never
 					// reads a preflight body, but anything else that
@@ -731,6 +765,11 @@ func main() {
 	r.StaticFile("/docs/openapi.yaml", "docs/openapi.yaml")
 
 	v1 := r.Group("/api/v1")
+	// Every API request belongs to a tenant: the host decides which one
+	// when TENANT_ENABLED is on, and it is the default tenant otherwise.
+	// Handlers read the id from the context instead of assuming global
+	// data.
+	v1.Use(middleware.TenantResolver(db, cfg))
 
 	v1.GET("/version", systemH.GetVersion)
 
@@ -740,17 +779,22 @@ func main() {
 
 	// Public site config (no auth — used by login page, branding)
 	v1.GET("/config", func(c *gin.Context) {
-		settings, _ := db.GetPublicSettings(c)
-		if settings == nil {
-			settings = make(map[string]string)
+		settings, _ := db.GetPublicSettingsForTenant(c.Request.Context(), middleware.TenantIDFrom(c))
+		out := make(gin.H, len(settings)+6)
+		for k, v := range settings {
+			out[k] = v
 		}
 		// The public address clients reach this server at, for the
-		// dashboard to show copyable feed URLs.
-		settings["base_url"] = cfg.BaseURL
+		// dashboard to show copyable feed URLs. On a tenant subdomain
+		// this is that origin; the default tenant keeps BASE_URL.
+		out["base_url"] = middleware.TenantBaseURLFrom(c)
+		if t, ok := middleware.TenantFrom(c); ok {
+			out["tenant"] = gin.H{"slug": t.Slug, "name": t.Name}
+		}
 		// Attribution: AGPL v3 Section 7(b) — see NOTICE
-		settings["attribution_text"] = branding.Tagline
-		settings["attribution_url"] = branding.URL
-		response.OK(c, settings)
+		out["attribution_text"] = branding.Tagline
+		out["attribution_url"] = branding.URL
+		response.OK(c, out)
 	})
 
 	// License-verification public key. SDKs fetch this once (or
@@ -790,7 +834,8 @@ func main() {
 	licRateLimit := max(cfg.RateLimitAPI*2, 120)
 	lic := v1.Group("/license",
 		middleware.LicenseBruteForceGuard(bf),
-		middleware.RateLimitByIPScoped("license", licRateLimit, time.Minute))
+		middleware.RateLimitByIPScoped("license", licRateLimit, time.Minute),
+		middleware.LicenseTenantScope(db))
 	{
 		// Idempotent-by-design endpoints (apply Idempotency-Key middleware
 		// to write paths only — read-style verifies are already idempotent).
@@ -864,6 +909,15 @@ func main() {
 	auth := v1.Group("/auth", middleware.RateLimitByIPScoped("auth", cfg.RateLimitAuth, time.Minute))
 	{
 		auth.GET("/providers", authH.Providers)
+		// Casdoor OIDC: all three answer 404 when CASDOOR_* is unset.
+		auth.GET("/casdoor/login", authH.CasdoorLogin)
+		auth.GET("/casdoor/callback", authH.CasdoorCallback)
+		// Desktop clients trade the token they got from Casdoor directly
+		// for a Keygate session. Tighter than the group: a token guess
+		// here should be expensive.
+		auth.POST("/casdoor/exchange",
+			middleware.RateLimitByIPScoped("casdoor_exchange", 10, time.Minute),
+			authH.CasdoorExchange)
 		// Its own bucket, an order of magnitude tighter than the group:
 		// this is the one endpoint that mails a caller-chosen address.
 		auth.POST("/otp/send",
@@ -895,6 +949,12 @@ func main() {
 		publicPlansH.ListPlans)
 
 	v1.POST("/webhook/stripe", middleware.RateLimitByIPScoped("stripe_webhook", 60, time.Minute), stripeH.Webhook)
+	// Casdoor's event deliveries. It has no HMAC, so a shared secret
+	// header gates the route; processed_events makes a redelivery a
+	// no-op. Answers 404 until both CASDOOR_* and the secret are set.
+	v1.POST("/webhook/casdoor",
+		middleware.RateLimitByIPScoped("casdoor_webhook", 120, time.Minute),
+		authH.CasdoorWebhook)
 	// Stripe verify is hit by every successful checkout return, so the
 	// limit is generous, but the endpoint must NOT be naked: each call
 	// proxies to Stripe's API and an attacker could otherwise force us
@@ -903,8 +963,13 @@ func main() {
 		middleware.RateLimitByIPScoped("checkout_verify", 60, time.Minute),
 		stripeH.VerifyCheckoutSession)
 
-	// Unified checkout: GET /pay/:checkout_id → Stripe
-	r.GET("/pay/:checkout_id", stripeH.CheckoutByPlan)
+	// Unified checkout: GET /pay/:checkout_id → Stripe. Signed-in buyers
+	// carry their account into the session; anyone else is sent to sign
+	// in first (the free self sign-up path stays anonymous).
+	r.GET("/pay/:checkout_id",
+		middleware.TenantResolver(db, cfg),
+		middleware.OptionalSession(cfg.JWTSecret, db.FindUserIsAdmin),
+		stripeH.CheckoutByPlan)
 
 	// Self sign-up for free plans (/pay sends those plans to the form).
 	// The code-sending step shares the login's buckets, so it cannot be
@@ -920,17 +985,19 @@ func main() {
 		signup.POST("/:checkout_id/verify", authH.SignupVerify)
 	}
 
-	portal := v1.Group("/portal", middleware.SessionAuth(cfg.JWTSecret, db.FindUserIsAdmin))
+	portal := v1.Group("/portal",
+		middleware.SessionAuth(cfg.JWTSecret, db.FindUserIsAdmin),
+		middleware.TenantAccess(db),
+		middleware.RequireTenantMember())
 	{
 		portal.GET("/me", authH.Me)
 		portal.GET("/licenses", func(c *gin.Context) {
-			emailVal, _ := c.Get("email")
-			emailStr, ok := emailVal.(string)
-			if !ok || emailStr == "" {
+			id := middleware.IdentityFrom(c)
+			if id.UserID == "" && id.Email == "" {
 				response.Unauthorized(c, "unauthorized")
 				return
 			}
-			licenses, err := db.ListLicensesByEmail(c, emailStr)
+			licenses, err := db.ListLicensesByEmailIn(c, middleware.TenantIDFrom(c), id.UserID, id.Email)
 			if err != nil {
 				response.Internal(c, err)
 				return
@@ -953,9 +1020,12 @@ func main() {
 				// Features are what the license grants, its addons
 				// included, as verify and the token read them.
 				Features []*model.Entitlement `json:"features"`
+				// IsOwner says this identity owns the licence: billing,
+				// team management and the owner's key are theirs alone.
+				IsOwner bool `json:"is_owner"`
 			}
 			model.FillLimits(licenses...)
-			upgradable, err := stripeH.UpgradableLicenses(c, emailStr, licenses)
+			upgradable, err := stripeH.UpgradableLicenses(c, id, licenses)
 			if err != nil {
 				response.Internal(c, err)
 				return
@@ -971,7 +1041,8 @@ func main() {
 			}
 			out := make([]portalLicense, 0, len(licenses))
 			for _, l := range licenses {
-				key, ok, err := handler.PortalLicenseView(c, db, l, emailStr)
+				isOwner := l.OwnedBy(id)
+				key, ok, err := handler.PortalLicenseView(c, db, l, id)
 				if err != nil {
 					response.Internal(c, err)
 					return
@@ -988,7 +1059,7 @@ func main() {
 					features = []*model.Entitlement{}
 				}
 				out = append(out, portalLicense{License: l, LicenseKey: key, Upgradable: upgradable[l.ID],
-					CancelScheduled: ending[l.ID] && strings.EqualFold(l.Email, emailStr), Features: features})
+					CancelScheduled: ending[l.ID] && isOwner, Features: features, IsOwner: isOwner})
 			}
 			// The portal hides the renewal button while the switch is
 			// off; the endpoint refuses the sale regardless.
@@ -1044,7 +1115,7 @@ func main() {
 				response.BadRequest(c, "product_id is required")
 				return
 			}
-			plans, _, err := db.ListPlans(c, productID, "", store.All)
+			plans, _, err := db.ListPlans(c, middleware.TenantIDFrom(c), productID, "", store.All)
 			if err != nil {
 				response.Internal(c, err)
 				return
@@ -1107,6 +1178,17 @@ func main() {
 		portal.POST("/licenses/upgrade", stripeH.StartUpgrade)
 	}
 
+	// Claiming binds an unowned licence (or the caller's own seat) to the
+	// signed-in account. It sits outside the membership gate: claiming is
+	// how a customer with a licence in this workspace becomes a member.
+	// The key is a credential, so it is rate-limited against brute force.
+	portalClaimH := handler.NewPortalClaimHandler(db)
+	v1.POST("/portal/licenses/claim",
+		middleware.SessionAuth(cfg.JWTSecret, db.FindUserIsAdmin),
+		middleware.TenantAccess(db),
+		middleware.RateLimitByIPScoped("portal_claim", 10, time.Minute),
+		portalClaimH.Claim)
+
 	// Admin route layout: three groups under /admin, all sharing the
 	// same Session-or-APIKey + rate-limit middlewares, differing only
 	// in which scope(s) RequireScope accepts.
@@ -1127,6 +1209,7 @@ func main() {
 	// product's release-signing identity.
 	baseAdminMW := []gin.HandlerFunc{
 		middleware.SessionOrAPIKey(cfg.JWTSecret, db, db.FindUserIsAdmin),
+		middleware.TenantAccess(db),
 		middleware.RateLimitByIPScoped("admin", cfg.RateLimitAdmin, time.Minute),
 	}
 	adminMW := append([]gin.HandlerFunc{}, baseAdminMW...)
@@ -1179,6 +1262,10 @@ func main() {
 		licWrite.POST("/licenses/:id/quantity", adminH.SetLicenseQuantity)
 		licWrite.POST("/licenses/:id/updates-until", adminH.SetLicenseUpdatesUntil)
 		licWrite.POST("/licenses/:id/change-plan", adminH.ChangeLicensePlan)
+		// Owner binding: guarded here, reassignment admin-only, so a
+		// licenses:write key cannot take a licence from its account.
+		licWrite.POST("/licenses/:id/owner", adminH.BindLicenseOwner)
+		admin.POST("/licenses/:id/owner/override", adminH.OverrideLicenseOwner)
 		// Cuts a licence loose from a subscription Stripe has
 		// finished with, so it can be managed locally again.
 		licWrite.POST("/licenses/:id/stripe/unlink", adminH.UnlinkStripeSubscription)
@@ -1270,6 +1357,45 @@ func main() {
 		admin.GET("/products/:id/signing-key/tauri-pubkey", releaseSigningH.DownloadPublicKeyTauri)
 
 	}
+
+	// ─── Platform console ───
+	// Only reachable on PLATFORM_HOST by a platform admin. Tenant
+	// resolution has already run on /api/v1; on the platform host there
+	// is no tenant context, and RequirePlatformAdmin refuses any other
+	// host.
+	platformMW := []gin.HandlerFunc{
+		middleware.SessionAuth(cfg.JWTSecret, db.FindUserIsAdmin),
+		middleware.TenantAccess(db),
+		middleware.RequirePlatformAdmin(),
+	}
+	platform := v1.Group("/platform", platformMW...)
+	{
+		platform.GET("/tenants", platformH.ListTenants)
+		platform.POST("/tenants", platformH.CreateTenant)
+		platform.GET("/tenants/:id", platformH.GetTenant)
+		platform.PATCH("/tenants/:id", platformH.UpdateTenant)
+		platform.GET("/tenants/:id/members", platformH.ListMembers)
+		platform.POST("/tenants/:id/members", platformH.AddMember)
+		platform.PATCH("/tenants/:id/members/:user_id", platformH.SetMemberRole)
+		platform.DELETE("/tenants/:id/members/:user_id", platformH.RemoveMember)
+		platform.GET("/settings", platformH.GetSettings)
+		platform.PUT("/settings", platformH.UpdateSettings)
+	}
+
+	// Who the request is, reachable on both a tenant host and the
+	// platform console: /portal/me sits behind RequireTenantMember and
+	// is not available on PLATFORM_HOST. TenantAccess fills the role
+	// and membership fields the payload reports.
+	v1.GET("/me",
+		middleware.SessionAuth(cfg.JWTSecret, db.FindUserIsAdmin),
+		middleware.TenantAccess(db),
+		authH.Me)
+
+	// The workspaces the signed-in account belongs to. Any authenticated
+	// account may call this; it is the workspace switcher.
+	v1.GET("/me/tenants",
+		middleware.SessionAuth(cfg.JWTSecret, db.FindUserIsAdmin),
+		platformH.MyTenants)
 
 	serveFrontend(r)
 

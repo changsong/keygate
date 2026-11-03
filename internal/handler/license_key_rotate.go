@@ -22,7 +22,7 @@ func (h *AdminHandler) RotateLicenseKey(c *gin.Context) {
 	if !h.checkLicenseScope(c, id) {
 		return
 	}
-	lic, err := h.Store.FindLicenseByID(c, id)
+	lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		response.NotFound(c, "license not found")
 		return

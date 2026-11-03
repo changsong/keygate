@@ -159,7 +159,7 @@ func TestTopUsersLeaveOutAdminsWhateverTheCase(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	top, err := s.GetTopUsers(ctx, prod.ID, 10)
+	top, err := s.GetTopUsers(ctx, "", prod.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

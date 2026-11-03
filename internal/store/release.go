@@ -47,6 +47,7 @@ var (
 
 // ReleaseFilter narrows ListReleases queries.
 type ReleaseFilter struct {
+	TenantID  string
 	ProductID string
 	Channel   string
 	Status    string
@@ -185,6 +186,20 @@ func (s *Store) GetReleaseProductID(ctx context.Context, id string) (string, err
 	return pid, err
 }
 
+// GetReleaseProductIDForTenant reads a release's product only if the
+// release belongs to tenantID. An empty tenantID skips the bound.
+func (s *Store) GetReleaseProductIDForTenant(ctx context.Context, tenantID, id string) (string, error) {
+	var pid string
+	q := s.DB.NewSelect().Model((*model.Release)(nil)).
+		Column("product_id").
+		Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	err := q.Scan(ctx, &pid)
+	return pid, err
+}
+
 // FindReleaseByID loads a release with its product + artifacts.
 func (s *Store) FindReleaseByID(ctx context.Context, id string) (*model.Release, error) {
 	r := new(model.Release)
@@ -257,6 +272,9 @@ func (s *Store) CountReleases(ctx context.Context, f ReleaseFilter) (int, error)
 }
 
 func applyReleaseFilters(q *bun.SelectQuery, f ReleaseFilter) *bun.SelectQuery {
+	if f.TenantID != "" {
+		q = q.Where("release.tenant_id = ?", f.TenantID)
+	}
 	if f.ProductID != "" {
 		q = q.Where("release.product_id = ?", f.ProductID)
 	}
@@ -281,11 +299,14 @@ type LatestPublished struct {
 // and channel, its highest published version by semver. The release
 // list is paged and filtered; this is what it is compared with, so a
 // draft below what is already out says so whatever page it is on.
-func (s *Store) LatestPublishedVersions(ctx context.Context, productID string) ([]LatestPublished, error) {
+func (s *Store) LatestPublishedVersions(ctx context.Context, tenantID, productID string) ([]LatestPublished, error) {
 	var rows []LatestPublished
 	q := s.DB.NewSelect().Model((*model.Release)(nil)).
 		Column("product_id", "channel", "version").
 		Where("status = ?", model.ReleaseStatusPublished)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = q.Where("product_id = ?", productID)
 	}

@@ -183,6 +183,7 @@ func TestCheckoutOfAMeteredPrice(t *testing.T) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodGet, "/pay/"+plan.CheckoutID+query, nil)
 		c.Params = gin.Params{{Key: "checkout_id", Value: plan.CheckoutID}}
+		c.Set("user_id", "test-buyer")
 		f.h.CheckoutByPlan(c)
 		return w.Code
 	}

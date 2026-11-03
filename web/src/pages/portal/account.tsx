@@ -133,7 +133,7 @@ export default function PortalAccountPage() {
                     <Shield className="h-3.5 w-3.5 text-primary" />
                     <span className="font-medium">{t("portal.administrator")}</span>
                     <Badge variant="secondary" className="ml-1 text-xs">
-                      {user.role}
+                      {user.tenant_role || user.role}
                     </Badge>
                   </>
                 ) : (

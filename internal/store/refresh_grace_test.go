@@ -199,7 +199,7 @@ func TestListLicensesByEmail_IgnoresCase(t *testing.T) {
 	if _, err := s.DB.NewRaw("UPDATE licenses SET email = ? WHERE id = ?", mixed, lic.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.ListLicensesByEmail(ctx, "case-"+lic.ID[:8]+"@example.com")
+	got, err := s.ListLicensesByEmail(ctx, "", "case-"+lic.ID[:8]+"@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

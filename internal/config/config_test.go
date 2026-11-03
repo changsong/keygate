@@ -229,3 +229,121 @@ func TestStripeLivemodeDerivation(t *testing.T) {
 		})
 	}
 }
+
+func TestTenantHostResolution(t *testing.T) {
+	c := &Config{
+		BaseURL:           "https://keygate.app",
+		TenantEnabled:     true,
+		TenantRootDomain:  "keygate.app",
+		PlatformHost:      "app.keygate.app",
+		DefaultTenantSlug: "default",
+	}
+	cases := []struct {
+		host string
+		slug string
+		root bool
+		ok   bool
+	}{
+		{"keygate.app", "default", true, true},
+		{"KEYGATE.APP:443", "default", true, true},
+		{"acme.keygate.app", "acme", false, true},
+		{"acme.keygate.app:443", "acme", false, true},
+		{"app.keygate.app", "", false, false},  // platform host, not a tenant
+		{"b.keygate.app", "", false, false},    // one-char slug
+		{"-x.keygate.app", "", false, false},   // leading hyphen
+		{"a.b.keygate.app", "", false, false},  // more than one label
+		{"evil-keygate.app", "", false, false}, // not the root domain
+		{"keygate.app.evil.com", "", false, false},
+		{"localhost:9000", "", false, false}, // not the configured root
+	}
+	for _, tc := range cases {
+		slug, root, ok := c.TenantSlugFromHost(tc.host)
+		if slug != tc.slug || root != tc.root || ok != tc.ok {
+			t.Errorf("TenantSlugFromHost(%q) = (%q,%v,%v), want (%q,%v,%v)",
+				tc.host, slug, root, ok, tc.slug, tc.root, tc.ok)
+		}
+	}
+}
+
+func TestTenantBaseURL(t *testing.T) {
+	c := &Config{
+		BaseURL:           "https://keygate.app:8443/",
+		TenantRootDomain:  "keygate.app",
+		DefaultTenantSlug: "default",
+	}
+	if got := c.TenantBaseURL("default"); got != "https://keygate.app:8443" {
+		t.Errorf("default tenant = %q, want BASE_URL without trailing slash", got)
+	}
+	if got := c.TenantBaseURL("acme"); got != "https://acme.keygate.app:8443" {
+		t.Errorf("tenant = %q, want acme subdomain with the BASE_URL port", got)
+	}
+	if got := c.PlatformBaseURL(); got != "https://keygate.app:8443" {
+		t.Errorf("platform without PLATFORM_HOST = %q, want BASE_URL", got)
+	}
+	c.PlatformHost = "app.keygate.app"
+	if got := c.PlatformBaseURL(); got != "https://app.keygate.app:8443" {
+		t.Errorf("platform = %q, want app subdomain", got)
+	}
+}
+
+func TestIsAllowedOrigin(t *testing.T) {
+	c := &Config{
+		Environment:      "production",
+		BaseURL:          "https://keygate.app",
+		TenantEnabled:    true,
+		TenantRootDomain: "keygate.app",
+		PlatformHost:     "app.keygate.app",
+	}
+	cases := map[string]bool{
+		"https://keygate.app":           true,
+		"https://app.keygate.app":       true,
+		"https://acme.keygate.app":      true,
+		"https://a.b.keygate.app":       true,
+		"http://acme.keygate.app":       false, // production is https-only
+		"https://acme.keygate.app.evil": false,
+		"https://evil.com":              false,
+		"":                              false,
+	}
+	for origin, want := range cases {
+		if got := c.IsAllowedOrigin(origin); got != want {
+			t.Errorf("IsAllowedOrigin(%q) = %v, want %v", origin, got, want)
+		}
+	}
+	// Tenancy off: only the single BaseURL origin, as before.
+	off := &Config{Environment: "production", BaseURL: "https://keygate.app"}
+	if off.IsAllowedOrigin("https://acme.keygate.app") {
+		t.Error("with tenancy off a subdomain origin should not be allowed")
+	}
+}
+
+func TestValidateTenantConfig(t *testing.T) {
+	base := &Config{
+		Environment:       "development",
+		JWTSecret:         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		LicenseSigningKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		TenantEnabled:     true,
+	}
+	if _, fatal := base.ValidateSecurityDefaults(); len(fatal) == 0 {
+		t.Fatal("enabled tenancy without root domain must be fatal")
+	}
+	base.TenantRootDomain = "keygate.app"
+	base.PlatformHost = "app.other.example"
+	if _, fatal := base.ValidateSecurityDefaults(); len(fatal) == 0 {
+		t.Fatal("platform host outside the root domain must be fatal")
+	}
+	base.PlatformHost = "app.keygate.app"
+	base.DefaultTenantSlug = "default"
+	if _, fatal := base.ValidateSecurityDefaults(); len(fatal) > 0 {
+		t.Fatalf("valid tenant config reported fatal: %v", fatal)
+	}
+	base.DefaultTenantSlug = "app" // reserved
+	if _, fatal := base.ValidateSecurityDefaults(); len(fatal) == 0 {
+		t.Fatal("reserved default slug must be fatal")
+	}
+	base.DefaultTenantSlug = "default"
+	base.Environment = "production"
+	base.TenantDevOverride = true
+	if _, fatal := base.ValidateSecurityDefaults(); len(fatal) == 0 {
+		t.Fatal("TENANT_DEV_OVERRIDE in production must be fatal")
+	}
+}

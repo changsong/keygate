@@ -94,6 +94,27 @@ Email OTP login with constant-time hash verification, role-based access checked 
 
 A Go server + PostgreSQL + (optional) S3-compatible storage for release artifacts. No Redis, no microservices. Auto-migration on startup. Setup wizard for first run. Custom branding, email templates, and i18n (English/Chinese built-in).
 
+### 🏬 Multi-tenancy (SaaS)
+
+One instance can serve many customer workspaces. Each workspace lives at `<slug>.<ROOT_DOMAIN>` and has its own products, plans, licenses, seats, API keys, webhooks, audit log, billing records and branding; a global account can belong to several workspaces. A platform console on `PLATFORM_HOST` opens workspaces, names their owners, suspends them, and edits platform-wide defaults.
+
+> **Note:** multi-tenancy is a deployment mode, not the default. Take a database backup first, then enable it in `.env`:
+
+```bash
+TENANT_ENABLED=true
+TENANT_ROOT_DOMAIN=keygate.example.com   # tenants live at <slug>.keygate.example.com
+PLATFORM_HOST=app.keygate.example.com    # the console, no tenant
+SESSION_COOKIE_DOMAIN=.keygate.example.com
+```
+
+Operating notes:
+
+- Point wildcard DNS (`*.keygate.example.com`) and a wildcard TLS certificate at the server; `PLATFORM_HOST` must belong to the root domain.
+- Casdoor needs a single redirect URI, `https://app.keygate.example.com/api/v1/auth/casdoor/callback`; the login state carries the workspace the visitor came from.
+- Stripe stays shared: checkout metadata records the workspace and customers are mapped per `(workspace, email)`, so one account's billing portal in one workspace never shows another's invoices.
+- Desktop clients keep using the license key; the key resolves to its workspace. On a workspace's own host the key must belong to it (another workspace's key answers like a missing one); the bare root domain stays key-only, so clients configured with `BASE_URL` keep working.
+- Existing installs keep working: `TENANT_ENABLED=false` routes every request to the seeded `default` workspace, and turning it on backfills existing data into it.
+
 <br />
 
 ## Quick Start

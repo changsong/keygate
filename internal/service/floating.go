@@ -59,6 +59,7 @@ func (s *FloatingService) CheckOut(ctx context.Context, in CheckOutInput) (*Chec
 
 	expiresAt := time.Now().Add(time.Duration(timeout) * time.Minute)
 	sess := &model.FloatingSession{
+		TenantID:  lic.TenantID,
 		LicenseID: lic.ID, Identifier: in.Identifier,
 		Label: in.Label, IPAddress: in.IPAddress, ExpiresAt: expiresAt,
 		SeatID: keySeatID(lic),

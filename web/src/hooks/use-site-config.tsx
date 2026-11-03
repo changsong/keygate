@@ -9,6 +9,12 @@ interface SiteConfig {
   language: string
   attribution_text: string
   attribution_url: string
+  // The public origin of the workspace being served (a tenant subdomain
+  // when multi-tenancy is on).
+  base_url: string
+  // The workspace this page belongs to; absent if the server did not
+  // name one.
+  tenant: { slug: string; name: string } | null
   loading: boolean
 }
 
@@ -20,6 +26,8 @@ const defaults: SiteConfig = {
   language: "",
   attribution_text: "Powered by Keygate",
   attribution_url: "https://keygate.app",
+  base_url: "",
+  tenant: null,
   loading: true,
 }
 
@@ -40,6 +48,8 @@ export function SiteConfigProvider({ children }: { children: ReactNode }) {
           language: data.language || "",
           attribution_text: data.attribution_text || "Powered by Keygate",
           attribution_url: data.attribution_url || "https://keygate.app",
+          base_url: data.base_url || "",
+          tenant: data.tenant ?? null,
           loading: false,
         })
         // Dynamic favicon from custom logo. index.html declares
@@ -47,9 +57,10 @@ export function SiteConfigProvider({ children }: { children: ReactNode }) {
         // favorite (often the sizes="32x32" one), so rewriting only
         // the first link never visibly changed the tab icon — update
         // them all.
-        if (data.logo_url) {
+        const logo = data.logo_url
+        if (logo) {
           document.querySelectorAll<HTMLLinkElement>("link[rel~='icon']").forEach((link) => {
-            link.href = data.logo_url
+            link.href = logo
           })
         }
         if (data.brand_color) {

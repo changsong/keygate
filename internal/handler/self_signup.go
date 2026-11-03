@@ -33,7 +33,7 @@ import (
 func (h *AuthHandler) signupPlan(c *gin.Context) *model.Plan {
 	checkoutID := c.Param("checkout_id")
 	if len(checkoutID) == 8 {
-		plan, err := h.Store.FindPlanByCheckoutID(c, checkoutID)
+		plan, err := h.Store.FindPlanByCheckoutIDForTenant(c, tenantID(c), checkoutID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			response.Internal(c, err)
 			return nil
@@ -61,7 +61,7 @@ func (h *AuthHandler) SignupInfo(c *gin.Context) {
 		return
 	}
 	productName := ""
-	if p, err := h.Store.FindProductByID(c, plan.ProductID); err == nil {
+	if p, err := h.Store.FindProductForTenant(c, tenantID(c), plan.ProductID); err == nil {
 		productName = p.Name
 	}
 	response.OK(c, gin.H{
@@ -187,6 +187,7 @@ func (h *AuthHandler) SignupVerify(c *gin.Context) {
 		return
 	}
 	l := &model.License{
+		TenantID:        tenantID(c),
 		ProductID:       plan.ProductID,
 		PlanID:          plan.ID,
 		Email:           email,
@@ -242,6 +243,14 @@ func (h *AuthHandler) SignupVerify(c *gin.Context) {
 		// the direct link.
 		slog.Warn("self sign-up: failed to link licence to its account", "license_id", l.ID, "error", err)
 	}
+	// The visitor now holds a licence here; the workspace is where they
+	// manage it.
+	if user != nil {
+		if err := h.Store.EnsureTenantMember(c, tenantID(c), user.ID); err != nil {
+			slog.Warn("self sign-up: could not add the buyer to the workspace",
+				"tenant_id", tenantID(c), "user_id", user.ID, "error", err)
+		}
+	}
 
 	h.mailSelfSignupLicense(c, l, plan)
 
@@ -290,6 +299,10 @@ func (h *AuthHandler) signInExisting(c *gin.Context, email string, l *model.Lice
 		response.Internal(c, err)
 		return
 	}
+	if err := h.Store.EnsureTenantMember(c, tenantID(c), user.ID); err != nil {
+		slog.Warn("self sign-up: could not add the buyer to the workspace",
+			"tenant_id", tenantID(c), "user_id", user.ID, "error", err)
+	}
 	h.startSession(c, user)
 	response.OK(c, gin.H{
 		"status": "existing", "license_id": l.ID,
@@ -305,10 +318,10 @@ func (h *AuthHandler) mailSelfSignupLicense(c *gin.Context, l *model.License, pl
 		return
 	}
 	productName, downloadURL := "", ""
-	if p, err := h.Store.FindProductByID(c, l.ProductID); err == nil {
+	if p, err := h.Store.FindProductForTenant(c, tenantID(c), l.ProductID); err == nil {
 		productName, downloadURL = p.Name, p.DownloadURL
 	}
-	subject, body := h.Email.RenderLicenseCreated(productName, plan.Name, h.Store.DecryptLicenseKey(l), downloadURL)
+	subject, body := h.Email.RenderLicenseCreatedFor(l.TenantID, productName, plan.Name, h.Store.DecryptLicenseKey(l), downloadURL)
 	if err := h.Store.EnqueueEmail(c, l.Email, subject, body); err != nil {
 		slog.Error("self sign-up: failed to queue licence email", "license_id", l.ID, "error", err)
 	}

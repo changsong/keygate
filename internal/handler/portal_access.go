@@ -8,31 +8,31 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/store"
 	"github.com/tabloy/keygate/pkg/response"
 )
 
-// PortalLicenseView shapes a licence for the signed-in address on the
+// PortalLicenseView shapes a licence for the signed-in identity on the
 // portal's licence list. Each person gets their own key: the owner the
 // licence's, a member theirs, made the first time they get here (see
 // Store.MemberKey). A member sees the devices their key activated and
-// the members who have joined; activation_count stays the team's. ok is false when the address is
+// the members who have joined; activation_count stays the team's. ok is false when the identity is
 // neither the owner nor a member any more, as when the seat went in
 // between the queries that read the list, or when the product has no
 // seats now, so a member's key opens nothing: they get nothing, and
 // never the owner's key. lic.Product, lic.Seats and lic.Activations
 // must be loaded.
-func PortalLicenseView(ctx context.Context, st *store.Store, lic *model.License, email string) (key string, ok bool, err error) {
-	if strings.EqualFold(lic.Email, email) {
+func PortalLicenseView(ctx context.Context, st *store.Store, lic *model.License, id model.Identity) (key string, ok bool, err error) {
+	if lic.OwnedBy(id) {
 		key = st.DecryptLicenseKey(lic)
 		trimForOwner(lic)
 	} else {
-		viewer := PortalViewerSeat(lic, email)
+		viewer := PortalViewerSeat(lic, id)
 		if viewer == nil || lic.Product == nil || !model.ProductSupports(lic.Product.Type, model.CapSeats) {
 			return "", false, nil
 		}
@@ -127,14 +127,14 @@ const portalGuardMaxBody = 64 * 1024
 // failed for any reason but "no such licence" included; lic is nil, with
 // ok true, when there is no key or no such licence, and the handler
 // answers that.
-func guardedLicense(c *gin.Context, st *store.Store) (lic *model.License, email string, ok bool) {
+func guardedLicense(c *gin.Context, st *store.Store) (lic *model.License, id model.Identity, ok bool) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, portalGuardMaxBody)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		response.Err(c, http.StatusRequestEntityTooLarge, "BODY_TOO_LARGE",
 			"request body exceeds 64 KiB")
 		c.Abort()
-		return nil, "", false
+		return nil, model.Identity{}, false
 	}
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 	var req struct {
@@ -149,31 +149,37 @@ func guardedLicense(c *gin.Context, st *store.Store) (lic *model.License, email 
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		response.BadRequest(c, "invalid request body")
 		c.Abort()
-		return nil, "", false
+		return nil, model.Identity{}, false
 	}
 	if req.LicenseKey == "" {
-		return nil, "", true
+		return nil, model.Identity{}, true
 	}
-	// Defense in depth: a malformed JWT that produced an empty email
-	// claim must not fall through to seat lookups with "".
-	email = emailFromContext(c)
-	if email == "" {
+	// Defense in depth: an empty identity must not fall through to seat
+	// lookups.
+	id = middleware.IdentityFrom(c)
+	if id.UserID == "" && id.Email == "" {
 		response.Unauthorized(c, "unauthorized")
 		c.Abort()
-		return nil, "", false
+		return nil, model.Identity{}, false
 	}
 	lic, err = st.FindLicenseByKey(c.Request.Context(), req.LicenseKey)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, email, true
+		return nil, id, true
 	}
 	// Any other failure stops here: letting it through would skip the
 	// check this guard exists for.
 	if err != nil {
 		response.Internal(c, err)
 		c.Abort()
-		return nil, "", false
+		return nil, model.Identity{}, false
 	}
-	return lic, email, true
+	// A licence belongs to one workspace; presenting its key on another
+	// tenant's host must read as "no such licence". The handler then
+	// answers its own not-found, so no oracle is added here.
+	if tenant := middleware.TenantIDFrom(c); tenant != "" && lic.TenantID != tenant {
+		return nil, id, true
+	}
+	return lic, id, true
 }
 
 // notYours turns the caller away with the same 404, code included, the
@@ -187,16 +193,16 @@ func notYours(c *gin.Context) {
 
 // PortalLicenseGuard lets through the licence's owner and its accepted
 // members; an invite not yet accepted gives no access. Emails compare
-// case-insensitively: admin-created licences may have stored mixed
-// case.
+// case-insensitively while the licence is unbound: admin-created
+// licences may have stored mixed case.
 func PortalLicenseGuard(st *store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		lic, email, ok := guardedLicense(c, st)
+		lic, id, ok := guardedLicense(c, st)
 		if !ok {
 			return
 		}
-		if lic != nil && !strings.EqualFold(lic.Email, email) {
-			seat, err := st.FindSeatByEmail(c.Request.Context(), lic.ID, email)
+		if lic != nil && !lic.OwnedBy(id) {
+			seat, err := st.FindSeatForIdentity(c.Request.Context(), lic.ID, id)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				response.Internal(c, err)
 				c.Abort()
@@ -215,11 +221,11 @@ func PortalLicenseGuard(st *store.Store) gin.HandlerFunc {
 // owner manages the team, members use the licence.
 func PortalSeatOwnerGuard(st *store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		lic, email, ok := guardedLicense(c, st)
+		lic, id, ok := guardedLicense(c, st)
 		if !ok {
 			return
 		}
-		if lic != nil && !strings.EqualFold(lic.Email, email) {
+		if lic != nil && !lic.OwnedBy(id) {
 			notYours(c)
 			return
 		}

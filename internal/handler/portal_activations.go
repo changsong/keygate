@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/service"
 	"github.com/tabloy/keygate/internal/store"
@@ -56,18 +57,18 @@ type portalActivationView struct {
 	MemberEmail string `json:"member_email,omitempty"`
 }
 
-// PortalViewerSeat is the seat the signed-in address holds on the
+// PortalViewerSeat is the seat the signed-in identity holds on the
 // licence: nil for its owner, who holds no seat row, and for anyone
 // without an accepted seat. lic.Seats must be loaded.
-func PortalViewerSeat(lic *model.License, email string) *model.Seat {
-	if strings.EqualFold(lic.Email, email) {
+func PortalViewerSeat(lic *model.License, id model.Identity) *model.Seat {
+	if lic.OwnedBy(id) {
 		return nil
 	}
 	// The oldest, should seats made before addresses were lower-cased
 	// leave two for one person: the seat Store.FindSeatByEmail picks.
 	var found *model.Seat
 	for _, s := range lic.Seats {
-		if s.RemovedAt != nil || s.AcceptedAt == nil || !strings.EqualFold(s.Email, email) {
+		if s.RemovedAt != nil || s.AcceptedAt == nil || !s.HeldBy(id) {
 			continue
 		}
 		if found == nil || s.CreatedAt.Before(found.CreatedAt) || (s.CreatedAt.Equal(found.CreatedAt) && s.ID < found.ID) {
@@ -89,8 +90,7 @@ func OwnDevices(rows []*model.Activation, seatID string) []*model.Activation {
 }
 
 // resolveOwnedLicense loads the license at :license_key and verifies
-// the logged-in user owns it (matches license.email) or holds an
-// accepted seat on it.
+// the logged-in identity owns it or holds an accepted seat on it.
 // viewer is their seat, nil for the owner. The response is already
 // written when ok is false.
 func (h *PortalActivationsHandler) resolveOwnedLicense(c *gin.Context) (lic *model.License, viewer *model.Seat, ok bool) {
@@ -100,9 +100,8 @@ func (h *PortalActivationsHandler) resolveOwnedLicense(c *gin.Context) (lic *mod
 		return nil, nil, false
 	}
 
-	emailVal, _ := c.Get("email")
-	emailStr, _ := emailVal.(string)
-	if emailStr == "" {
+	id := middleware.IdentityFrom(c)
+	if id.UserID == "" && id.Email == "" {
 		response.Unauthorized(c, "unauthorized")
 		return nil, nil, false
 	}
@@ -119,15 +118,19 @@ func (h *PortalActivationsHandler) resolveOwnedLicense(c *gin.Context) (lic *mod
 		response.NotFound(c, "license not found")
 		return nil, nil, false
 	}
+	if tenant := middleware.TenantIDFrom(c); tenant != "" && lic.TenantID != tenant {
+		response.NotFound(c, "license not found")
+		return nil, nil, false
+	}
 
-	if strings.EqualFold(lic.Email, emailStr) {
+	if lic.OwnedBy(id) {
 		return lic, nil, true
 	}
 	// An ACCEPTED member can also manage their own activations on
 	// the license. Pending invites confer no authority — possessing
 	// an unclaimed invite token shouldn't let an OTP-logged-in user
 	// burn through activation slots before going through accept.
-	seat, err := h.store.FindSeatByEmail(c.Request.Context(), lic.ID, emailStr)
+	seat, err := h.store.FindSeatForIdentity(c.Request.Context(), lic.ID, id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		response.Internal(c, err)
 		return nil, nil, false

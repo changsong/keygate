@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Blocks,
+  Building2,
   ChevronDown,
   FileKey2,
   Heart,
@@ -89,6 +90,9 @@ export function AdminLayout() {
   // Out of reach is not signed out: retry, don't send them to login.
   if (!user && unavailable) return <ServiceUnavailableScreen onRetry={refetch} />
   if (!user) return <Navigate to="/login" replace />
+  // The admin area belongs to a workspace. On the tenant-less platform
+  // host there is nothing here to administer.
+  if (user.is_platform) return <Navigate to={user.is_platform_admin ? "/platform" : "/spaces"} replace />
   if (!user.is_admin) return <Navigate to="/portal" replace />
 
   // Settings sits below the groups rather than in one, so it is built
@@ -288,6 +292,9 @@ export function PortalLayout() {
   // Out of reach is not signed out: retry, don't send them to login.
   if (!user && unavailable) return <ServiceUnavailableScreen onRetry={refetch} />
   if (!user) return <Navigate to="/login" replace />
+  // The portal is a workspace's page; the platform host serves the
+  // workspace picker instead.
+  if (user.is_platform) return <Navigate to={user.is_platform_admin ? "/platform" : "/spaces"} replace />
 
   return (
     <div className="min-h-screen bg-background">
@@ -360,6 +367,127 @@ export function PortalLayout() {
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+        >
+          {attribution_text}
+        </a>
+      </footer>
+    </div>
+  )
+}
+
+// PlatformLayout is the console that manages workspaces. It exists only
+// on PLATFORM_HOST and only for platform admins; the API refuses the
+// same routes everywhere else, so the guard here is about sending
+// people to a page they can actually use rather than about security.
+export function PlatformLayout() {
+  const { user, loading, unavailable, logout, refetch } = useAuth()
+  const { site_name, logo_url, attribution_text, attribution_url } = useSiteConfig()
+  const { t } = useI18n()
+  const location = useLocation()
+
+  const nav = [
+    { to: "/platform", label: t("platform.navTenants"), icon: Building2 },
+    { to: "/spaces", label: t("platform.navSpaces"), icon: Layers },
+    { to: "/platform/settings", label: t("platform.navSettings"), icon: Settings },
+  ]
+  const isActive = (to: string) =>
+    to === "/platform" ? location.pathname === "/platform" : location.pathname.startsWith(to)
+
+  if (loading) return <LoadingScreen />
+  if (!user && unavailable) return <ServiceUnavailableScreen onRetry={refetch} />
+  if (!user) return <Navigate to="/login" replace />
+  // Not a platform admin: the console is not theirs. A tenant host
+  // serves the workspace UI; the bare platform host serves the space
+  // picker for accounts that do belong to workspaces.
+  if (!user.is_platform_admin) {
+    return <Navigate to={user.is_platform ? "/spaces" : "/portal"} replace />
+  }
+  if (!user.is_platform) return <Navigate to="/portal" replace />
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="border-b bg-card">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4">
+          <Link to="/platform" className="flex items-center gap-2 font-bold text-lg tracking-tight">
+            <img src={logo_url || "/logo.svg"} alt="" className="h-6 w-6" />
+            <span className="max-w-40 truncate">{site_name}</span>
+          </Link>
+          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
+            {t("platform.badge")}
+          </span>
+          <nav className="hidden flex-1 items-center gap-1 md:flex">
+            {nav.map((item) => (
+              <Link key={item.to} to={item.to}>
+                <div
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    isActive(item.to)
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  )}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </div>
+              </Link>
+            ))}
+          </nav>
+          <div className="ml-auto">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-2">
+                  <User className="h-4 w-4" />
+                  <span className="hidden max-w-40 truncate sm:inline">{user.name || user.email}</span>
+                  <ChevronDown className="h-3 w-3 opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem className="text-xs text-muted-foreground">{user.email}</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link to="/spaces">{t("platform.navSpaces")}</Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={logout} className="text-destructive">
+                  <LogOut className="h-4 w-4 mr-2" /> {t("nav.logout")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+        {/* Narrow screens keep the nav, since the drawer would cost
+            more than it saves on a console with three destinations. */}
+        <div className="mx-auto max-w-6xl overflow-x-auto px-2 md:hidden">
+          <nav className="flex gap-1">
+            {nav.map((item) => (
+              <Link key={item.to} to={item.to}>
+                <div
+                  className={cn(
+                    "flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                    isActive(item.to)
+                      ? "border-primary text-primary"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </div>
+              </Link>
+            ))}
+          </nav>
+        </div>
+      </header>
+      <main className="mx-auto max-w-6xl p-4 md:p-8">
+        <ErrorBoundary>
+          <Outlet />
+        </ErrorBoundary>
+      </main>
+      <footer className="border-t py-3 text-center">
+        <a
+          href={attribution_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-muted-foreground/50 transition-colors hover:text-muted-foreground"
         >
           {attribution_text}
         </a>

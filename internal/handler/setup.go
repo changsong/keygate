@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/store"
 	"github.com/tabloy/keygate/pkg/apperr"
 	"github.com/tabloy/keygate/pkg/response"
@@ -150,9 +151,19 @@ func (h *SetupHandler) Initialize(c *gin.Context) {
 		return
 	}
 
+	// The first owner owns the default workspace too. Product, plan and
+	// settings below all live in it.
+	if _, err := tx.NewRaw(
+		"INSERT INTO tenant_members (tenant_id, user_id, role) VALUES (?, ?, 'owner') ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = 'owner'",
+		model.DefaultTenantID, actualUserID,
+	).Exec(ctx); err != nil {
+		response.Internal(c, err)
+		return
+	}
+
 	// Set site_name
 	if _, err := tx.NewRaw(
-		"INSERT INTO settings (key, value) VALUES ('site_name', ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+		"INSERT INTO settings (tenant_id, key, value) VALUES ('', 'site_name', ?) ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value",
 		req.SiteName,
 	).Exec(ctx); err != nil {
 		response.Internal(c, err)
@@ -201,7 +212,7 @@ func (h *SetupHandler) Initialize(c *gin.Context) {
 
 	// Mark setup complete
 	if _, err := tx.NewRaw(
-		"INSERT INTO settings (key, value) VALUES ('setup_complete', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true'",
+		"INSERT INTO settings (tenant_id, key, value) VALUES ('', 'setup_complete', 'true') ON CONFLICT (tenant_id, key) DO UPDATE SET value = 'true'",
 	).Exec(ctx); err != nil {
 		response.Internal(c, err)
 		return

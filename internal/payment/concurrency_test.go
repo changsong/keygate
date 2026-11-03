@@ -68,7 +68,7 @@ func TestConcurrentDeliveriesProduceOneLicense(t *testing.T) {
 		}
 	}
 
-	lics, _ := s.ListLicensesByEmail(ctx, email)
+	lics, _ := s.ListLicensesByEmail(ctx, "", email)
 	if len(lics) != 1 || lics[0].StripeCheckoutSessionID != sessionID {
 		t.Fatalf("expected exactly one license for the session, got %d", len(lics))
 	}
@@ -83,7 +83,7 @@ func TestConcurrentDeliveriesProduceOneLicense(t *testing.T) {
 			t.Fatalf("session still pending after everything settled")
 		}
 	}
-	if lics, _ = s.ListLicensesByEmail(ctx, email); len(lics) != 1 {
+	if lics, _ = s.ListLicensesByEmail(ctx, "", email); len(lics) != 1 {
 		t.Fatalf("pending sync duplicated the license")
 	}
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/service"
 	"github.com/tabloy/keygate/internal/store"
@@ -80,7 +81,7 @@ func (h *ReleaseAdminHandler) Create(c *gin.Context) {
 	if !requireKeyProductScope(c, req.ProductID) {
 		return
 	}
-	prod, err := h.store.FindProductByID(c.Request.Context(), req.ProductID)
+	prod, err := h.store.FindProductForTenant(c.Request.Context(), middleware.TenantIDFrom(c), req.ProductID)
 	if err != nil {
 		response.NotFound(c, "product not found")
 		return
@@ -92,6 +93,7 @@ func (h *ReleaseAdminHandler) Create(c *gin.Context) {
 	}
 
 	rel, err := h.svc.CreateRelease(c.Request.Context(), service.CreateReleaseInput{
+		TenantID:     middleware.TenantIDFrom(c),
 		ProductID:    req.ProductID,
 		Version:      req.Version,
 		Channel:      req.Channel,
@@ -260,7 +262,7 @@ func (h *ReleaseAdminHandler) assertArtifactBelongsToRelease(c *gin.Context, rel
 // AdminHandler.checkLicenseScope; centralising the lookup keeps the
 // scoped-key blast radius consistent across resource families.
 func (h *ReleaseAdminHandler) checkReleaseScope(c *gin.Context, releaseID string) bool {
-	pid, err := h.store.GetReleaseProductID(c.Request.Context(), releaseID)
+	pid, err := h.store.GetReleaseProductIDForTenant(c.Request.Context(), middleware.TenantIDFrom(c), releaseID)
 	if err != nil {
 		response.NotFound(c, "release not found")
 		return false
@@ -357,6 +359,9 @@ func (h *ReleaseAdminHandler) Unyank(c *gin.Context) {
 // need to change them); status moves through dedicated action endpoints.
 func (h *ReleaseAdminHandler) Update(c *gin.Context) {
 	id := c.Param("id")
+	if !h.checkReleaseScope(c, id) {
+		return
+	}
 	var req struct {
 		Name         *string `json:"name"`
 		ReleaseNotes *string `json:"release_notes"`
@@ -475,6 +480,7 @@ func (h *ReleaseAdminHandler) List(c *gin.Context) {
 	}
 
 	filter := store.ReleaseFilter{
+		TenantID:  middleware.TenantIDFrom(c),
 		ProductID: productID,
 		Channel:   channel,
 		Status:    status,
@@ -494,7 +500,7 @@ func (h *ReleaseAdminHandler) List(c *gin.Context) {
 	}
 	// The newest published version per product and channel, whatever
 	// the filter and page: what the dashboard warns a draft against.
-	latest, err := h.store.LatestPublishedVersions(c.Request.Context(), productID)
+	latest, err := h.store.LatestPublishedVersions(c.Request.Context(), middleware.TenantIDFrom(c), productID)
 	if err != nil {
 		response.Internal(c, err)
 		return

@@ -32,9 +32,12 @@ import (
 // same instant would otherwise be free to swap places between two
 // queries, and under paging that means a row shown twice while
 // another is never shown at all.
-func (s *Store) ListProducts(ctx context.Context, search string, types []string, p Page) ([]*model.Product, int, error) {
+func (s *Store) ListProducts(ctx context.Context, tenantID, search string, types []string, p Page) ([]*model.Product, int, error) {
 	var out []*model.Product
 	q := s.DB.NewSelect().Model(&out).OrderExpr("created_at DESC, id DESC")
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
 	if len(types) > 0 {
 		q = q.Where("type IN (?)", bun.List(types))
 	}
@@ -53,6 +56,18 @@ func (s *Store) ListProducts(ctx context.Context, search string, types []string,
 
 func (s *Store) FindProductByID(ctx context.Context, id string) (*model.Product, error) {
 	return FindProductByIDIn(ctx, s.DB, id)
+}
+
+// FindProductForTenant reads a product only if it belongs to tenantID.
+// An id from another workspace returns sql.ErrNoRows, the same answer as
+// an id that does not exist.
+func (s *Store) FindProductForTenant(ctx context.Context, tenantID, id string) (*model.Product, error) {
+	p := new(model.Product)
+	q := s.DB.NewSelect().Model(p).Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	return p, q.Scan(ctx)
 }
 
 // FindProductByIDIn reads the product on a caller's transaction, for
@@ -164,10 +179,13 @@ func (s *Store) DeleteProduct(ctx context.Context, id string) error {
 // product's, unfiltered) and how many the filter matched. Entitlements
 // are a has-many relation, which bun loads in a query of its own, so
 // the limit applies to plans and not to their rows.
-func (s *Store) ListPlans(ctx context.Context, productID, search string, p Page) ([]*model.Plan, int, error) {
+func (s *Store) ListPlans(ctx context.Context, tenantID, productID, search string, p Page) ([]*model.Plan, int, error) {
 	var out []*model.Plan
 	q := s.DB.NewSelect().Model(&out).Relation("Entitlements").Relation("Product").
 		OrderExpr("sort_order ASC, plan.created_at DESC, plan.id DESC")
+	if tenantID != "" {
+		q = q.Where("plan.tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = q.Where("plan.product_id = ?", productID)
 	}
@@ -329,12 +347,36 @@ func (s *Store) DeleteEntitlement(ctx context.Context, id string) error {
 	return deletedOne(s.DB.NewDelete().Model((*model.Entitlement)(nil)).Where("id = ?", id).Exec(ctx))
 }
 
+// FindEntitlementForTenant reads an entitlement only if it belongs to
+// tenantID.
+func (s *Store) FindEntitlementForTenant(ctx context.Context, tenantID, id string) (*model.Entitlement, error) {
+	e := new(model.Entitlement)
+	q := s.DB.NewSelect().Model(e).Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	return e, q.Scan(ctx)
+}
+
+// DeleteEntitlementForTenant deletes an entitlement only if it belongs
+// to tenantID.
+func (s *Store) DeleteEntitlementForTenant(ctx context.Context, tenantID, id string) error {
+	q := s.DB.NewDelete().Model((*model.Entitlement)(nil)).Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	return deletedOne(q.Exec(ctx))
+}
+
 // ─── API Key ───
 
-func (s *Store) ListAPIKeys(ctx context.Context, productID, search string, p Page) ([]*model.APIKey, int, error) {
+func (s *Store) ListAPIKeys(ctx context.Context, tenantID, productID, search string, p Page) ([]*model.APIKey, int, error) {
 	var out []*model.APIKey
 	q := s.DB.NewSelect().Model(&out).Relation("Product").
 		OrderExpr("api_key.created_at DESC, api_key.id DESC")
+	if tenantID != "" {
+		q = q.Where("api_key.tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = q.Where("api_key.product_id = ?", productID)
 	}
@@ -377,6 +419,21 @@ func (s *Store) GetLicenseProductID(ctx context.Context, id string) (string, err
 	return pid, err
 }
 
+// GetLicenseProductIDForTenant resolves the product behind a licence
+// only if that licence belongs to tenantID, so a scoped admin cannot
+// reach another workspace's row by guessing its id.
+func (s *Store) GetLicenseProductIDForTenant(ctx context.Context, tenantID, id string) (string, error) {
+	var pid string
+	q := s.DB.NewSelect().Model((*model.License)(nil)).
+		Column("product_id").
+		Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	err := q.Scan(ctx, &pid)
+	return pid, err
+}
+
 // FindAPIKeyByID is the byID lookup used by the admin/rotate path.
 // It does not eager-load the product since the rotate response only
 // needs the row's name + scopes for audit context.
@@ -387,6 +444,16 @@ func (s *Store) FindAPIKeyByID(ctx context.Context, id string) (*model.APIKey, e
 		return nil, err
 	}
 	return ak, nil
+}
+
+// FindAPIKeyForTenant reads an API key only if it belongs to tenantID.
+func (s *Store) FindAPIKeyForTenant(ctx context.Context, tenantID, id string) (*model.APIKey, error) {
+	ak := new(model.APIKey)
+	q := s.DB.NewSelect().Model(ak).Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	return ak, q.Scan(ctx)
 }
 
 // RotateAPIKey swaps the secret for an existing row. The ID, name,
@@ -423,6 +490,41 @@ func (s *Store) FindLicenseByID(ctx context.Context, id string) (*model.License,
 		Relation("Activations").
 		Where("license.id = ?", id).
 		Scan(ctx)
+}
+
+// FindLicenseForTenant reads a licence only if it belongs to tenantID.
+// A licence from another workspace returns sql.ErrNoRows, so a handler
+// cannot tell it apart from one that does not exist.
+func (s *Store) FindLicenseForTenant(ctx context.Context, tenantID, id string) (*model.License, error) {
+	l := new(model.License)
+	q := s.DB.NewSelect().Model(l).
+		Relation("Plan").
+		Relation("Plan.Entitlements").
+		Relation("Product").
+		Relation("Activations").
+		Where("license.id = ?", id)
+	if tenantID != "" {
+		q = q.Where("license.tenant_id = ?", tenantID)
+	}
+	return l, q.Scan(ctx)
+}
+
+// FindLicenseForTenantWithCounts is FindLicenseForTenant with the
+// computed fields filled in, as FindLicenseByIDWithCounts is.
+func (s *Store) FindLicenseForTenantWithCounts(ctx context.Context, tenantID, id string) (*model.License, error) {
+	l, err := s.FindLicenseForTenant(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	l.ActivationCount = len(l.Activations)
+	if l.Plan != nil && l.Plan.LicenseModel == "floating" {
+		n, err := s.CountActiveFloating(ctx, l.ID)
+		if err != nil {
+			return nil, err
+		}
+		l.ActiveSessionCount = n
+	}
+	return l, nil
 }
 
 // FindLicenseByIDWithCounts is FindLicenseByID with the computed
@@ -885,11 +987,14 @@ func syncSubscriptionStatus(ctx context.Context, tx bun.Tx, licenseID, status st
 }
 
 // ExportLicenses returns all licenses matching filters (no pagination).
-func (s *Store) ExportLicenses(ctx context.Context, productID, status string) ([]*model.License, error) {
+func (s *Store) ExportLicenses(ctx context.Context, tenantID, productID, status string) ([]*model.License, error) {
 	var out []*model.License
 	q := s.DB.NewSelect().Model(&out).
 		Relation("Plan").Relation("Product").
 		OrderExpr("license.created_at DESC")
+	if tenantID != "" {
+		q = q.Where("license.tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = q.Where("license.product_id = ?", productID)
 	}
@@ -953,8 +1058,11 @@ func auditOfProduct(q *bun.SelectQuery, productID string) *bun.SelectQuery {
         )))`, productID, productID, productID, productID, productID, productID, productID, productID)
 }
 
-func (s *Store) ListAuditLogs(ctx context.Context, entity, entityID, productID string, offset, limit int) ([]*model.AuditLog, int, error) {
+func (s *Store) ListAuditLogs(ctx context.Context, tenantID, entity, entityID, productID string, offset, limit int) ([]*model.AuditLog, int, error) {
 	q := s.DB.NewSelect().Model((*model.AuditLog)(nil)).OrderExpr("created_at DESC, id DESC")
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
 	if entity != "" {
 		q = q.Where("entity = ?", entity)
 	}
@@ -987,33 +1095,53 @@ type Stats struct {
 	RecentLicenses   []*model.License `json:"recent_licenses"`
 }
 
-func (s *Store) GetStats(ctx context.Context) (*Stats, error) {
+// GetStats is the dashboard count for one workspace. Empty tenantID
+// counts every tenant, for the platform console.
+func (s *Store) GetStats(ctx context.Context, tenantID string) (*Stats, error) {
 	stats := &Stats{ByStatus: make(map[string]int)}
 
-	stats.TotalLicenses, _ = s.DB.NewSelect().Model((*model.License)(nil)).Count(ctx)
-	stats.ActiveLicenses, _ = s.DB.NewSelect().Model((*model.License)(nil)).Where("status = 'active'").Count(ctx)
-	stats.TotalActivations, _ = s.DB.NewSelect().Model((*model.Activation)(nil)).Count(ctx)
-	stats.TotalProducts, _ = s.DB.NewSelect().Model((*model.Product)(nil)).Count(ctx)
-	stats.TotalSeats, _ = s.DB.NewSelect().Model((*model.Seat)(nil)).Where("removed_at IS NULL").Count(ctx)
-	stats.TotalUsageEvents, _ = s.DB.NewSelect().Model((*model.UsageEvent)(nil)).Count(ctx)
-	stats.TotalWebhooks, _ = s.DB.NewSelect().Model((*model.Webhook)(nil)).Where("active = true").Count(ctx)
+	count := func(m any, where string) int {
+		q := s.DB.NewSelect().Model(m)
+		if tenantID != "" {
+			q = q.Where("tenant_id = ?", tenantID)
+		}
+		if where != "" {
+			q = q.Where(where)
+		}
+		n, _ := q.Count(ctx)
+		return n
+	}
+	stats.TotalLicenses = count((*model.License)(nil), "")
+	stats.ActiveLicenses = count((*model.License)(nil), "status = 'active'")
+	stats.TotalActivations = count((*model.Activation)(nil), "")
+	stats.TotalProducts = count((*model.Product)(nil), "")
+	stats.TotalSeats = count((*model.Seat)(nil), "removed_at IS NULL")
+	stats.TotalUsageEvents = count((*model.UsageEvent)(nil), "")
+	stats.TotalWebhooks = count((*model.Webhook)(nil), "active = true")
 
 	type statusCount struct {
 		Status string `bun:"status"`
 		Count  int    `bun:"count"`
 	}
 	var counts []statusCount
-	_ = s.DB.NewSelect().Model((*model.License)(nil)).
-		ColumnExpr("status, count(*) as count").
-		Group("status").Scan(ctx, &counts)
+	cq := s.DB.NewSelect().Model((*model.License)(nil)).
+		ColumnExpr("status, count(*) as count")
+	if tenantID != "" {
+		cq = cq.Where("tenant_id = ?", tenantID)
+	}
+	_ = cq.Group("status").Scan(ctx, &counts)
 	for _, c := range counts {
 		stats.ByStatus[c.Status] = c.Count
 	}
 
 	var recent []*model.License
-	_ = s.DB.NewSelect().Model(&recent).
+	rq := s.DB.NewSelect().Model(&recent).
 		Relation("Product").Relation("Plan").
-		OrderExpr("license.created_at DESC").Limit(10).Scan(ctx)
+		OrderExpr("license.created_at DESC").Limit(10)
+	if tenantID != "" {
+		rq = rq.Where("license.tenant_id = ?", tenantID)
+	}
+	_ = rq.Scan(ctx)
 	stats.RecentLicenses = recent
 
 	return stats, nil
@@ -1052,6 +1180,17 @@ func (s *Store) FindActivationByID(ctx context.Context, id string) (*model.Activ
 	return a, err
 }
 
+// FindActivationForTenant reads an activation only if it belongs to
+// tenantID.
+func (s *Store) FindActivationForTenant(ctx context.Context, tenantID, id string) (*model.Activation, error) {
+	a := new(model.Activation)
+	q := s.DB.NewSelect().Model(a).Where("id = ?", id)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	return a, q.Scan(ctx)
+}
+
 // GetActivationProductID resolves the product behind an activation
 // in a single query. Used by the activation delete handler to enforce
 // API-key product scoping without loading the full activation row.
@@ -1061,6 +1200,23 @@ func (s *Store) GetActivationProductID(ctx context.Context, activationID string)
         SELECT l.product_id
         FROM activations a JOIN licenses l ON l.id = a.license_id
         WHERE a.id = ?`, activationID).Scan(ctx, &pid)
+	return pid, err
+}
+
+// GetActivationProductIDForTenant is GetActivationProductID scoped to
+// the workspace that owns the activation.
+func (s *Store) GetActivationProductIDForTenant(ctx context.Context, tenantID, activationID string) (string, error) {
+	var pid string
+	query := `
+        SELECT l.product_id
+        FROM activations a JOIN licenses l ON l.id = a.license_id
+        WHERE a.id = ?`
+	args := []any{activationID}
+	if tenantID != "" {
+		query += " AND a.tenant_id = ?"
+		args = append(args, tenantID)
+	}
+	err := s.DB.NewRaw(query, args...).Scan(ctx, &pid)
 	return pid, err
 }
 
@@ -1074,6 +1230,17 @@ func (s *Store) ListActivations(ctx context.Context, licenseID string) ([]*model
 func (s *Store) FindProductBySlug(ctx context.Context, slug string) (*model.Product, error) {
 	p := new(model.Product)
 	return p, s.DB.NewSelect().Model(p).Where("slug = ?", slug).Scan(ctx)
+}
+
+// FindProductBySlugForTenant is the public catalogue lookup scoped to
+// the workspace whose host served the page.
+func (s *Store) FindProductBySlugForTenant(ctx context.Context, tenantID, slug string) (*model.Product, error) {
+	p := new(model.Product)
+	q := s.DB.NewSelect().Model(p).Where("slug = ?", slug)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	return p, q.Scan(ctx)
 }
 
 func (s *Store) ProductLicenseCount(ctx context.Context, productID string) (int, error) {

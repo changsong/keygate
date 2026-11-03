@@ -1,4 +1,4 @@
-import { Mail, Terminal } from "lucide-react"
+import { LogIn, Mail, Terminal } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Navigate, useSearchParams } from "react-router-dom"
 import { ServiceUnavailableScreen } from "@/components/service-unavailable"
@@ -18,8 +18,15 @@ export default function LoginPage() {
   const { user, loading, unavailable, refetch } = useAuth()
   const [params] = useSearchParams()
   const justSetUp = params.get("setup") === "done"
+  const ssoError = params.get("casdoor_error")
+  const next = safeNext(params.get("next"))
   const [needsSetup, setNeedsSetup] = useState(false)
   const [devLogin, setDevLogin] = useState(false)
+  const [casdoor, setCasdoor] = useState<{
+    enabled: boolean
+    display_name: string
+    login_url: string
+  } | null>(null)
   const [devEmail, setDevEmail] = useState("admin@keygate.dev")
   const [devName, setDevName] = useState("Admin")
   const [devLoading, setDevLoading] = useState(false)
@@ -46,6 +53,7 @@ export default function LoginPage() {
       .providers()
       .then((r) => {
         setDevLogin(r.dev_login)
+        setCasdoor(r.casdoor?.enabled ? r.casdoor : null)
       })
       .catch(() => {})
   }, [])
@@ -114,9 +122,36 @@ export default function LoginPage() {
     }
   }
 
+  const ssoMessage =
+    ssoError === "email_unverified"
+      ? t("login.casdoorUnverified")
+      : ssoError === "not_allowed"
+        ? t("login.casdoorNotAllowed")
+        : ssoError === "identity_conflict"
+          ? t("login.casdoorConflict")
+          : ssoError === "tenant_suspended"
+            ? t("login.tenantSuspended")
+            : ssoError === "tenant_unavailable"
+              ? t("login.tenantUnavailable")
+              : ssoError
+                ? t("login.casdoorFailed")
+                : ""
+
   if (loading) return null
   if (needsSetup) return <Navigate to="/setup" replace />
-  if (user) return <Navigate to={user.is_admin ? "/admin" : "/portal"} replace />
+  if (user) {
+    // The platform console has no tenant: a platform admin lands there,
+    // everyone else picks one of their workspaces; a tenant host keeps
+    // its own landing page.
+    const fallback = user.is_platform
+      ? user.is_platform_admin
+        ? "/platform"
+        : "/spaces"
+      : user.is_admin
+        ? "/admin"
+        : "/portal"
+    return <Navigate to={next ?? fallback} replace />
+  }
   // A signed-in user whose session cannot be confirmed right now would
   // otherwise be shown a login form they do not need.
   if (unavailable) return <ServiceUnavailableScreen onRetry={refetch} />
@@ -134,6 +169,35 @@ export default function LoginPage() {
         <CardContent className="space-y-3">
           {justSetUp && otpStep === "email" && (
             <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{t("login.setupDone")}</p>
+          )}
+          {ssoMessage && otpStep === "email" && (
+            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{ssoMessage}</p>
+          )}
+          {/* Casdoor SSO (optional) */}
+          {casdoor && otpStep === "email" && (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  const target = next ?? "/portal"
+                  // The server may hand back a URL that already names the
+                  // workspace (?tenant=...), so add next to the query it has.
+                  const sep = casdoor.login_url.includes("?") ? "&" : "?"
+                  window.location.href = `${casdoor.login_url}${sep}next=${encodeURIComponent(target)}`
+                }}
+              >
+                <LogIn className="h-4 w-4 mr-2" />
+                {t("login.signInWith", { provider: casdoor.display_name })}
+              </Button>
+              <div className="relative my-1">
+                <Separator />
+                <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-xs text-muted-foreground">
+                  {t("login.or")}
+                </span>
+              </div>
+            </>
           )}
           {/* OTP Email Step */}
           {otpStep === "email" && (
@@ -243,4 +307,18 @@ export default function LoginPage() {
       </a>
     </div>
   )
+}
+
+// safeNext only follows a path on this site. The server applies the same
+// rule; this copy keeps the browser from honouring a hostile ?next= that
+// reached the page directly.
+function safeNext(raw: string | null): string | null {
+  if (!raw || raw.length > 512) return null
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) return null
+  for (const ch of raw) {
+    const c = ch.charCodeAt(0)
+    if (c < 0x20 || c === 0x7f) return null
+  }
+  if (raw === "/login" || raw.startsWith("/login?")) return null
+  return raw
 }

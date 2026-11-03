@@ -77,7 +77,7 @@ func newPortalTeam(t *testing.T) *portalTeam {
 // listed is the licence as the portal's list reads it for email.
 func (p *portalTeam) listed(t *testing.T, email string) *model.License {
 	t.Helper()
-	ls, err := p.f.s.ListLicensesByEmail(p.f.ctx, email)
+	ls, err := p.f.s.ListLicensesByEmail(p.f.ctx, "", email)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestPortalLicenseView(t *testing.T) {
 	l.Notes, l.ExternalCustomerID, l.StripeCustomerID, l.SignupSource = "chargeback risk", "crm_1", "cus_1", "trial_form"
 	l.UserID, l.StripePaymentIntentID, l.StripeCheckoutSessionID, l.ExternalWorkspaceID, l.SignupPlanID = "u1", "pi_1", "cs_1", "ws_1", "plan_1"
 	l.StripeSubscriptionID, l.PaymentProvider = "sub_1", "stripe"
-	key, ok, err := PortalLicenseView(ctx, s, l, strings.ToUpper(lic.Email))
+	key, ok, err := PortalLicenseView(ctx, s, l, model.Identity{Email: strings.ToUpper(lic.Email)})
 	if err != nil || !ok || key != lic.LicenseKey {
 		t.Fatalf("owner view = %q, %v, %v; want the licence key", key, ok, err)
 	}
@@ -152,7 +152,7 @@ func TestPortalLicenseView(t *testing.T) {
 
 	l = p.listed(t, p.alice.Email)
 	l.StripeCustomerID, l.StripeSubscriptionID, l.Notes, l.MarketingConsent, l.UserID = "cus_1", "sub_1", "vip", true, "u1"
-	key, ok, err = PortalLicenseView(ctx, s, l, p.alice.Email)
+	key, ok, err = PortalLicenseView(ctx, s, l, model.Identity{Email: p.alice.Email})
 	if err != nil || !ok || key != p.aliceKey {
 		t.Fatalf("member view = %q, %v, %v; want her own key", key, ok, err)
 	}
@@ -182,7 +182,7 @@ func TestPortalLicenseView(t *testing.T) {
 
 	for _, who := range []string{p.pending.Email, p.gone.Email, "stranger-" + p.f.suffix + "@example.com"} {
 		l = p.listed(t, who)
-		key, ok, err = PortalLicenseView(ctx, s, l, who)
+		key, ok, err = PortalLicenseView(ctx, s, l, model.Identity{Email: who})
 		if err != nil || ok || key != "" {
 			t.Fatalf("view for %s = %q, %v, %v; want nothing", who, key, ok, err)
 		}
@@ -194,11 +194,11 @@ func TestPortalLicenseView(t *testing.T) {
 		t.Fatal(err)
 	}
 	l = p.listed(t, p.alice.Email)
-	if key, ok, err = PortalLicenseView(ctx, s, l, p.alice.Email); err != nil || ok || key != "" {
+	if key, ok, err = PortalLicenseView(ctx, s, l, model.Identity{Email: p.alice.Email}); err != nil || ok || key != "" {
 		t.Fatalf("member view on a product without seats = %q, %v, %v; want nothing", key, ok, err)
 	}
 	l = p.listed(t, lic.Email)
-	if key, ok, err = PortalLicenseView(ctx, s, l, lic.Email); err != nil || !ok || key != lic.LicenseKey {
+	if key, ok, err = PortalLicenseView(ctx, s, l, model.Identity{Email: lic.Email}); err != nil || !ok || key != lic.LicenseKey {
 		t.Fatalf("owner view on a product without seats = %q, %v, %v", key, ok, err)
 	}
 	if _, err := s.DB.NewRaw("UPDATE products SET type = 'hybrid' WHERE id = ?", lic.ProductID).Exec(ctx); err != nil {
@@ -211,7 +211,7 @@ func TestPortalLicenseView(t *testing.T) {
 	if _, _, err := s.RemoveSeat(ctx, p.alice.ID); err != nil {
 		t.Fatal(err)
 	}
-	key, ok, err = PortalLicenseView(ctx, s, l, p.alice.Email)
+	key, ok, err = PortalLicenseView(ctx, s, l, model.Identity{Email: p.alice.Email})
 	if err != nil || ok || key != "" {
 		t.Fatalf("view for a member removed since the list = %q, %v, %v; want nothing", key, ok, err)
 	}
@@ -308,10 +308,10 @@ func TestPortalViewerSeat_Oldest(t *testing.T) {
 	newer := &model.Seat{ID: "a-newer", Email: "bob@x.com", AcceptedAt: &now, CreatedAt: now}
 	pending := &model.Seat{ID: "c-pending", Email: "BOB@x.com", CreatedAt: now.Add(-2 * time.Hour)}
 	lic := &model.License{Email: "owner@x.com", Seats: []*model.Seat{newer, pending, older}}
-	if got := PortalViewerSeat(lic, "bob@x.com"); got == nil || got.ID != older.ID {
+	if got := PortalViewerSeat(lic, model.Identity{Email: "bob@x.com"}); got == nil || got.ID != older.ID {
 		t.Fatalf("viewer seat = %v, want the oldest accepted %s", got, older.ID)
 	}
-	if got := PortalViewerSeat(lic, "owner@x.com"); got != nil {
+	if got := PortalViewerSeat(lic, model.Identity{Email: "owner@x.com"}); got != nil {
 		t.Fatalf("the owner got seat %v", got)
 	}
 }
@@ -325,11 +325,11 @@ func TestPortalLicenseView_PausedMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := p.listed(t, p.alice.Email)
-	if _, ok, err := PortalLicenseView(ctx, s, l, p.alice.Email); err != nil || !ok || !l.KeySeatPaused {
+	if _, ok, err := PortalLicenseView(ctx, s, l, model.Identity{Email: p.alice.Email}); err != nil || !ok || !l.KeySeatPaused {
 		t.Fatalf("member view: ok %v, paused %v, %v; want her told she is paused", ok, l.KeySeatPaused, err)
 	}
 	l = p.listed(t, lic.Email)
-	if _, ok, err := PortalLicenseView(ctx, s, l, lic.Email); err != nil || !ok || l.KeySeatPaused {
+	if _, ok, err := PortalLicenseView(ctx, s, l, model.Identity{Email: lic.Email}); err != nil || !ok || l.KeySeatPaused {
 		t.Fatalf("owner view: ok %v, paused %v, %v; the owner is never paused", ok, l.KeySeatPaused, err)
 	}
 	marked := false

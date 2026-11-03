@@ -544,7 +544,7 @@ func NewAdminHandler(s *store.Store, wh *service.WebhookService, em *service.Ema
 // ─── Stats ───
 
 func (h *AdminHandler) Stats(c *gin.Context) {
-	stats, err := h.Store.GetStats(c)
+	stats, err := h.Store.GetStats(c, tenantID(c))
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -571,7 +571,7 @@ func (h *AdminHandler) ListProducts(c *gin.Context) {
 		}
 	}
 	page := listPage(c)
-	products, total, err := h.Store.ListProducts(c, c.Query("search"), types, page)
+	products, total, err := h.Store.ListProducts(c, tenantID(c), c.Query("search"), types, page)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -580,7 +580,7 @@ func (h *AdminHandler) ListProducts(c *gin.Context) {
 }
 
 func (h *AdminHandler) GetProduct(c *gin.Context) {
-	p, err := h.Store.FindProductByID(c, c.Param("id"))
+	p, err := h.Store.FindProductForTenant(c, tenantID(c), c.Param("id"))
 	if err != nil {
 		response.NotFound(c, "product not found")
 		return
@@ -642,7 +642,7 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 		return
 	}
 
-	p := &model.Product{Name: req.Name, Slug: req.Slug, Type: req.Type, FeedLicenseRequired: req.FeedLicenseRequired,
+	p := &model.Product{TenantID: tenantID(c), Name: req.Name, Slug: req.Slug, Type: req.Type, FeedLicenseRequired: req.FeedLicenseRequired,
 		DownloadURL: req.DownloadURL, LicensePrefix: req.LicensePrefix}
 	if err := h.Store.CreateProduct(c, p); err != nil {
 		if store.IsUniqueViolation(err) {
@@ -664,7 +664,7 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 }
 
 func (h *AdminHandler) UpdateProduct(c *gin.Context) {
-	p, err := h.Store.FindProductByID(c, c.Param("id"))
+	p, err := h.Store.FindProductForTenant(c, tenantID(c), c.Param("id"))
 	if err != nil {
 		response.NotFound(c, "product not found")
 		return
@@ -1012,6 +1012,14 @@ func productTypeChangeProblemIn(ctx context.Context, tx bun.Tx, productID, newTy
 
 func (h *AdminHandler) DeleteProduct(c *gin.Context) {
 	id := c.Param("id")
+	if _, err := h.Store.FindProductForTenant(c, tenantID(c), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			response.NotFound(c, "product not found")
+			return
+		}
+		response.Internal(c, err)
+		return
+	}
 	// Plans, licences and releases each hold the product by a
 	// foreign key the database refuses to break. Counting them here
 	// is what turns "an internal error occurred" — with the reason
@@ -1061,7 +1069,7 @@ func (h *AdminHandler) DeleteProduct(c *gin.Context) {
 
 func (h *AdminHandler) ListPlans(c *gin.Context) {
 	page := listPage(c)
-	plans, total, err := h.Store.ListPlans(c, c.Query("product_id"), c.Query("search"), page)
+	plans, total, err := h.Store.ListPlans(c, tenantID(c), c.Query("product_id"), c.Query("search"), page)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -1070,7 +1078,7 @@ func (h *AdminHandler) ListPlans(c *gin.Context) {
 }
 
 func (h *AdminHandler) GetPlan(c *gin.Context) {
-	p, err := h.Store.FindPlanByID(c, c.Param("id"))
+	p, err := h.Store.FindPlanForTenant(c, tenantID(c), c.Param("id"))
 	if err != nil {
 		response.NotFound(c, "plan not found")
 		return
@@ -1090,7 +1098,7 @@ func (h *AdminHandler) PlanSeatImpact(c *gin.Context) {
 		response.BadRequest(c, "max_seats must be a whole number, 0 or more")
 		return
 	}
-	p, err := h.Store.FindPlanByID(c, c.Param("id"))
+	p, err := h.Store.FindPlanForTenant(c, tenantID(c), c.Param("id"))
 	if err != nil {
 		response.NotFound(c, "plan not found")
 		return
@@ -1275,7 +1283,7 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 	// orthogonal. Example: a saas product's plan must not set
 	// max_activations (no per-device licensing). A desktop product's
 	// plan must not set max_seats. Hybrid allows both.
-	prod, err := h.Store.FindProductByID(c, req.ProductID)
+	prod, err := h.Store.FindProductForTenant(c, tenantID(c), req.ProductID)
 	if err != nil {
 		response.NotFound(c, "product not found")
 		return
@@ -1348,6 +1356,7 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 	}
 
 	p := &model.Plan{
+		TenantID:             tenantID(c),
 		ProductID:            req.ProductID,
 		Name:                 req.Name,
 		Slug:                 req.Slug,
@@ -1427,7 +1436,7 @@ func (h *AdminHandler) CreatePlan(c *gin.Context) {
 }
 
 func (h *AdminHandler) UpdatePlan(c *gin.Context) {
-	p, err := h.Store.FindPlanByID(c, c.Param("id"))
+	p, err := h.Store.FindPlanForTenant(c, tenantID(c), c.Param("id"))
 	if err != nil {
 		response.NotFound(c, "plan not found")
 		return
@@ -1467,7 +1476,7 @@ func (h *AdminHandler) UpdatePlan(c *gin.Context) {
 
 	// Capability gating mirrors CreatePlan: validate against the parent
 	// product's type. Look up the product once.
-	prod, err := h.Store.FindProductByID(c, p.ProductID)
+	prod, err := h.Store.FindProductForTenant(c, tenantID(c), p.ProductID)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -1921,6 +1930,10 @@ func (h *AdminHandler) stripePricesTaken(c *gin.Context, purchasePrice, renewalP
 	}
 	if purchasePrice != "" {
 		if other, err := h.Store.FindPlanByStripeRenewalPrice(c, purchasePrice); err == nil && other.ID != exceptPlanID {
+			if !sameTenantPlan(c, other) {
+				response.Conflict(c, "STRIPE_PRICE_IN_USE", "stripe_price_id is already in use", nil)
+				return true
+			}
 			response.Conflict(c, "STRIPE_PRICE_IN_USE",
 				"stripe_price_id is the renewal price of plan \""+other.Name+"\"",
 				gin.H{"plan_id": other.ID, "product_id": other.ProductID})
@@ -1934,6 +1947,10 @@ func (h *AdminHandler) stripePricesTaken(c *gin.Context, purchasePrice, renewalP
 			return true
 		}
 		if other, err := h.Store.FindPlanByStripePrice(c, renewalPrice); err == nil && other.ID != exceptPlanID {
+			if !sameTenantPlan(c, other) {
+				response.Conflict(c, "STRIPE_PRICE_IN_USE", "stripe_renewal_price_id is already in use", nil)
+				return true
+			}
 			response.Conflict(c, "STRIPE_PRICE_IN_USE",
 				"stripe_renewal_price_id is the purchase price of plan \""+other.Name+"\"",
 				gin.H{"plan_id": other.ID, "product_id": other.ProductID})
@@ -1955,15 +1972,44 @@ func (h *AdminHandler) stripePriceTaken(c *gin.Context, priceID, exceptPlanID st
 	if err != nil || other.ID == exceptPlanID {
 		return false
 	}
+	// The price mapping is global because one Stripe account serves
+	// every workspace: a price claimed elsewhere is still a conflict,
+	// but naming that plan would tell this admin another tenant exists.
+	if !sameTenantPlan(c, other) {
+		response.Conflict(c, "STRIPE_PRICE_IN_USE", "stripe_price_id is already in use", nil)
+		return true
+	}
 	response.Conflict(c, "STRIPE_PRICE_IN_USE",
 		"stripe_price_id is already used by plan \""+other.Name+"\"",
 		gin.H{"plan_id": other.ID, "product_id": other.ProductID})
 	return true
 }
 
+// sameTenantPlan reports whether the plan belongs to the caller's
+// workspace. Rows written before multi-tenancy read as the default.
+func sameTenantPlan(c *gin.Context, p *model.Plan) bool {
+	if p == nil {
+		return true
+	}
+	tenant := p.TenantID
+	if tenant == "" {
+		tenant = model.DefaultTenantID
+	}
+	return tenant == tenantID(c)
+}
+
 func (h *AdminHandler) DeletePlan(c *gin.Context) {
 	id := c.Param("id")
-	pid := h.Store.ProductOfAudited(c, "plan", id) // gone after the delete
+	plan, err := h.Store.FindPlanForTenant(c, tenantID(c), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			response.NotFound(c, "plan not found")
+			return
+		}
+		response.Internal(c, err)
+		return
+	}
+	pid := plan.ProductID
 	if err := h.Store.DeletePlanUnlessFallback(c, id); err != nil {
 		if errors.Is(err, store.ErrPlanHasLicenses) {
 			response.Err(c, http.StatusConflict, "HAS_LICENSES", "cannot delete plan with existing licenses")
@@ -2030,8 +2076,21 @@ func (h *AdminHandler) CreateEntitlement(c *gin.Context) {
 		return
 	}
 
+	// The plan decides which workspace the entitlement belongs to; a
+	// plan id from another tenant must not be reachable here.
+	switch _, err := h.Store.FindPlanForTenant(c, tenantID(c), req.PlanID); {
+	case err == nil:
+	case errors.Is(err, sql.ErrNoRows):
+		response.NotFound(c, "plan not found")
+		return
+	default:
+		response.Internal(c, err)
+		return
+	}
+
 	e := &model.Entitlement{
-		PlanID: req.PlanID, Feature: req.Feature,
+		TenantID: tenantID(c),
+		PlanID:   req.PlanID, Feature: req.Feature,
 		ValueType: req.ValueType, Value: req.Value,
 		QuotaPeriod: req.QuotaPeriod, QuotaUnit: req.QuotaUnit,
 		StripeMeterEventName: req.StripeMeterEventName,
@@ -2110,7 +2169,7 @@ func normalizeFeatureValue(valueType, value, quotaPeriod string) (string, string
 }
 
 func (h *AdminHandler) UpdateEntitlement(c *gin.Context) {
-	e, err := h.Store.FindEntitlementByID(c, c.Param("id"))
+	e, err := h.Store.FindEntitlementForTenant(c, tenantID(c), c.Param("id"))
 	if err != nil {
 		response.NotFound(c, "entitlement not found")
 		return
@@ -2192,7 +2251,7 @@ func (h *AdminHandler) UpdateEntitlement(c *gin.Context) {
 
 func (h *AdminHandler) DeleteEntitlement(c *gin.Context) {
 	pid := h.Store.ProductOfAudited(c, "entitlement", c.Param("id")) // gone after the delete
-	if err := h.Store.DeleteEntitlement(c, c.Param("id")); err != nil {
+	if err := h.Store.DeleteEntitlementForTenant(c, tenantID(c), c.Param("id")); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			response.NotFound(c, "entitlement not found")
 			return
@@ -2211,7 +2270,7 @@ func (h *AdminHandler) DeleteEntitlement(c *gin.Context) {
 
 func (h *AdminHandler) ListAPIKeys(c *gin.Context) {
 	page := listPage(c)
-	keys, total, err := h.Store.ListAPIKeys(c, c.Query("product_id"), c.Query("search"), page)
+	keys, total, err := h.Store.ListAPIKeys(c, tenantID(c), c.Query("product_id"), c.Query("search"), page)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -2233,7 +2292,7 @@ func (h *AdminHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 	if req.ProductID != "" {
-		if _, err := h.Store.FindProductByID(c, req.ProductID); err != nil {
+		if _, err := h.Store.FindProductForTenant(c, tenantID(c), req.ProductID); err != nil {
 			response.NotFound(c, "product not found")
 			return
 		}
@@ -2266,6 +2325,7 @@ func (h *AdminHandler) CreateAPIKey(c *gin.Context) {
 	}
 
 	ak := &model.APIKey{
+		TenantID:  tenantID(c),
 		ProductID: req.ProductID,
 		Name:      req.Name,
 		Prefix:    prefix,
@@ -2421,7 +2481,7 @@ func (h *AdminHandler) trialFallbackProblem(c *gin.Context, planID, productID, l
 	if targetID == planID {
 		return "trial_fallback_plan_id cannot be the plan itself", nil
 	}
-	target, err := h.Store.FindPlanByID(c, targetID)
+	target, err := h.Store.FindPlanForTenant(c, tenantID(c), targetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "trial_fallback_plan_id: plan not found", nil
 	}
@@ -2483,7 +2543,7 @@ func validateScopes(scopes []string) error {
 // touching the row's name / scopes / product_id.
 func (h *AdminHandler) RotateAPIKey(c *gin.Context) {
 	id := c.Param("id")
-	ak, err := h.Store.FindAPIKeyByID(c, id)
+	ak, err := h.Store.FindAPIKeyForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "api key not found")
 		return
@@ -2564,6 +2624,7 @@ func (h *AdminHandler) ListLicenses(c *gin.Context) {
 		return
 	}
 	licenses, total, err := h.Store.ListLicenses(c, store.LicenseListFilter{
+		TenantID:            tenantID(c),
 		ProductID:           productID,
 		Status:              c.Query("status"),
 		Search:              c.Query("search"),
@@ -2587,7 +2648,7 @@ func (h *AdminHandler) ListLicenses(c *gin.Context) {
 
 func (h *AdminHandler) GetLicense(c *gin.Context) {
 	id := c.Param("id")
-	l, err := h.Store.FindLicenseByIDWithCounts(c, id)
+	l, err := h.Store.FindLicenseForTenantWithCounts(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
@@ -2675,7 +2736,7 @@ func (h *AdminHandler) CreateLicense(c *gin.Context) {
 	}
 
 	// Look up plan first to determine license type and set appropriate fields
-	plan, err := h.Store.FindPlanByID(c, req.PlanID)
+	plan, err := h.Store.FindPlanForTenant(c, tenantID(c), req.PlanID)
 	if err != nil {
 		response.NotFound(c, "plan not found")
 		return
@@ -2719,6 +2780,7 @@ func (h *AdminHandler) CreateLicense(c *gin.Context) {
 	}
 
 	l := &model.License{
+		TenantID:            tenantID(c),
 		ProductID:           req.ProductID,
 		PlanID:              req.PlanID,
 		Email:               req.Email,
@@ -2751,7 +2813,7 @@ func (h *AdminHandler) CreateLicense(c *gin.Context) {
 		// The same wait a bounded plan or a manual cutoff serves: a
 		// period issued now would be skippable through a copy of the
 		// public feed until the links in it expire.
-		prod, err := h.Store.FindProductByID(c, l.ProductID)
+		prod, err := h.Store.FindProductForTenant(c, tenantID(c), l.ProductID)
 		if err != nil {
 			response.Internal(c, err)
 			return
@@ -2809,10 +2871,10 @@ func (h *AdminHandler) CreateLicense(c *gin.Context) {
 	// the license is already persisted, and admin can resend manually.
 	if h.Email != nil {
 		productName, downloadURL := "", ""
-		if prod, err := h.Store.FindProductByID(c, l.ProductID); err == nil {
+		if prod, err := h.Store.FindProductForTenant(c, tenantID(c), l.ProductID); err == nil {
 			productName, downloadURL = prod.Name, prod.DownloadURL
 		}
-		h.Email.SendLicenseCreated(req.Email, productName, plan.Name, l.LicenseKey, downloadURL)
+		h.Email.SendLicenseCreatedFor(l.TenantID, req.Email, productName, plan.Name, l.LicenseKey, downloadURL)
 	}
 
 	// The key is returned exactly here: the admin explicitly created
@@ -2899,7 +2961,7 @@ func (h *AdminHandler) RevealLicenseKey(c *gin.Context) {
 	if !h.checkLicenseScope(c, id) {
 		return
 	}
-	l, err := h.Store.FindLicenseByID(c, id)
+	l, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
@@ -2945,7 +3007,7 @@ func (h *AdminHandler) ResendLicenseEmail(c *gin.Context) {
 	if !h.checkLicenseScope(c, id) {
 		return
 	}
-	l, err := h.Store.FindLicenseByID(c, id)
+	l, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
@@ -2985,7 +3047,7 @@ func (h *AdminHandler) ResendLicenseEmail(c *gin.Context) {
 	if l.Plan != nil {
 		planName = l.Plan.Name
 	}
-	subject, body := h.Email.RenderLicenseCreated(productName, planName, key, downloadURL)
+	subject, body := h.Email.RenderLicenseCreatedFor(l.TenantID, productName, planName, key, downloadURL)
 	if err := h.Store.EnqueueEmail(c, l.Email, subject, body); err != nil {
 		response.Err(c, http.StatusInternalServerError, "EMAIL_QUEUE_FAILED",
 			"could not queue the email")
@@ -3021,7 +3083,7 @@ func (h *AdminHandler) RevokeLicense(c *gin.Context) {
 		ActorType: "admin", ActorID: adminID(c),
 	})
 	if h.Webhook != nil {
-		if lic, err := h.Store.FindLicenseByID(c, id); err == nil {
+		if lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id); err == nil {
 			h.Webhook.Dispatch(c, lic.ProductID, "license.revoked", map[string]any{
 				"license_id": id, "email": lic.Email,
 			})
@@ -3039,7 +3101,7 @@ func (h *AdminHandler) RevokeLicense(c *gin.Context) {
 // POST /admin/licenses/:id/refund
 func (h *AdminHandler) RefundLicense(c *gin.Context) {
 	id := c.Param("id")
-	lic, err := h.Store.FindLicenseByID(c, id)
+	lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
@@ -3136,7 +3198,7 @@ func (h *AdminHandler) SuspendLicense(c *gin.Context) {
 		Entity: "license", EntityID: id, Action: "suspended",
 		ActorType: "admin", ActorID: adminID(c),
 	})
-	if lic, err := h.Store.FindLicenseByID(c, id); err == nil {
+	if lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id); err == nil {
 		if h.Webhook != nil {
 			h.Webhook.Dispatch(c, lic.ProductID, "license.suspended", map[string]any{
 				"license_id": id, "email": lic.Email,
@@ -3144,7 +3206,7 @@ func (h *AdminHandler) SuspendLicense(c *gin.Context) {
 		}
 		if h.Email != nil && lic.Email != "" {
 			productName := ""
-			if prod, perr := h.Store.FindProductByID(c, lic.ProductID); perr == nil {
+			if prod, perr := h.Store.FindProductForTenant(c, tenantID(c), lic.ProductID); perr == nil {
 				productName = prod.Name
 			}
 			h.Email.SendLicenseSuspended(lic.Email, productName, "")
@@ -3165,7 +3227,7 @@ func (h *AdminHandler) ReinstateLicense(c *gin.Context) {
 	// has a subscription is not known; one that does not exist is the
 	// store's to refuse.
 	var follow func(context.Context) error
-	lic, err := h.Store.FindLicenseByID(c, id)
+	lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		response.Internal(c, err)
 		return
@@ -3207,7 +3269,7 @@ func (h *AdminHandler) ReinstateLicense(c *gin.Context) {
 		ActorType: "admin", ActorID: adminID(c),
 		Changes: map[string]any{"status": status},
 	})
-	if lic, err := h.Store.FindLicenseByID(c, id); err == nil && h.Webhook != nil {
+	if lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id); err == nil && h.Webhook != nil {
 		h.Webhook.Dispatch(c, lic.ProductID, "license.reinstated", map[string]any{
 			"license_id": id, "email": lic.Email, "status": status,
 		})
@@ -3225,7 +3287,7 @@ func (h *AdminHandler) ReinstateLicense(c *gin.Context) {
 	// usable only when it was looked at: not claimed for a licence that
 	// could not be read back.
 	out := gin.H{"status": status}
-	if lic, err := h.Store.FindLicenseByID(c, id); err == nil {
+	if lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id); err == nil {
 		out["status"] = lic.Status
 		out["usable"] = true
 		// Reinstating lifts the suspension and nothing else: a licence
@@ -3272,7 +3334,7 @@ func (h *AdminHandler) SetLicenseValidUntil(c *gin.Context) {
 		return
 	}
 
-	lic, err := h.Store.FindLicenseByID(c, id)
+	lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
@@ -3402,7 +3464,7 @@ func (h *AdminHandler) SetLicenseQuantity(c *gin.Context) {
 		response.Internal(c, err)
 		return
 	}
-	lic, err := h.Store.FindLicenseByIDWithCounts(c, id)
+	lic, err := h.Store.FindLicenseForTenantWithCounts(c, tenantID(c), id)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -3443,13 +3505,13 @@ func (h *AdminHandler) SetLicenseUpdatesUntil(c *gin.Context) {
 		response.BadRequest(c, "invalid request body")
 		return
 	}
-	lic, err := h.Store.FindLicenseByID(c, id)
+	lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
 	}
 	// Only perpetual licenses have a period separate from valid_until.
-	plan, err := h.Store.FindPlanByID(c, lic.PlanID)
+	plan, err := h.Store.FindPlanForTenant(c, tenantID(c), lic.PlanID)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -3475,7 +3537,7 @@ func (h *AdminHandler) SetLicenseUpdatesUntil(c *gin.Context) {
 		if h.maintenanceGated(c) {
 			return
 		}
-		prod, err := h.Store.FindProductByID(c, lic.ProductID)
+		prod, err := h.Store.FindProductForTenant(c, tenantID(c), lic.ProductID)
 		if err != nil {
 			response.Internal(c, err)
 			return
@@ -3593,7 +3655,7 @@ func (h *AdminHandler) UnlinkStripeSubscription(c *gin.Context) {
 	if !h.checkLicenseScope(c, id) {
 		return
 	}
-	lic, err := h.Store.FindLicenseByID(c, id)
+	lic, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
@@ -3657,7 +3719,7 @@ func (h *AdminHandler) UnlinkStripeSubscription(c *gin.Context) {
 
 func (h *AdminHandler) DeleteActivation(c *gin.Context) {
 	id := c.Param("id")
-	pid, err := h.Store.GetActivationProductID(c, id)
+	pid, err := h.Store.GetActivationProductIDForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "activation not found")
 		return
@@ -3665,7 +3727,7 @@ func (h *AdminHandler) DeleteActivation(c *gin.Context) {
 	if !requireKeyProductScope(c, pid) {
 		return
 	}
-	act, err := h.Store.FindActivationByID(c, id)
+	act, err := h.Store.FindActivationForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "activation not found")
 		return
@@ -3696,7 +3758,7 @@ func (h *AdminHandler) DeleteActivation(c *gin.Context) {
 
 func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 	page := listPage(c)
-	logs, total, err := h.Store.ListAuditLogs(c,
+	logs, total, err := h.Store.ListAuditLogs(c, tenantID(c),
 		c.Query("entity"), c.Query("entity_id"), c.Query("product_id"),
 		page.Offset, page.Limit)
 	if err != nil {
@@ -3708,8 +3770,28 @@ func (h *AdminHandler) ListAuditLogs(c *gin.Context) {
 
 // ─── Users ───
 
+// ListUsers is the platform account directory. A tenant admin may only
+// resolve a single account by its full address (to invite or bind it);
+// listing every global account would reveal other tenants' customers.
 func (h *AdminHandler) ListUsers(c *gin.Context) {
 	page := listPage(c)
+	if !actingAsPlatformAdmin(c) {
+		search := strings.ToLower(strings.TrimSpace(c.Query("search")))
+		users := make([]*model.User, 0, 1)
+		if search != "" && strings.Contains(search, "@") {
+			u, err := h.Store.FindUserByEmail(c, search)
+			switch {
+			case err == nil && u.Role == model.RoleUser:
+				users = append(users, u)
+			case err == nil, errors.Is(err, sql.ErrNoRows):
+			default:
+				response.Internal(c, err)
+				return
+			}
+		}
+		listOK(c, "users", users, len(users), page)
+		return
+	}
 	users, total, err := h.Store.ListUsers(c, c.Query("search"), page.Offset, page.Limit)
 	if err != nil {
 		response.Internal(c, err)
@@ -3743,7 +3825,7 @@ func queryInt(c *gin.Context, key string, def int) int {
 // true on pass (caller continues); false after writing a 404 or 403
 // (caller must `return`).
 func (h *AdminHandler) checkLicenseScope(c *gin.Context, licenseID string) bool {
-	pid, err := h.Store.GetLicenseProductID(c, licenseID)
+	pid, err := h.Store.GetLicenseProductIDForTenant(c, tenantID(c), licenseID)
 	if err != nil {
 		// sql.ErrNoRows is the dominant failure here; surface as 404.
 		// Other DB errors are rare enough that 404 is still a safe
@@ -3887,7 +3969,7 @@ func (h *AdminHandler) ListAnalytics(c *gin.Context) {
 	// that reads it draws the whole window — handing it page 2 of a
 	// line would draw a line with a hole in it.
 	if granularity == "weekly" || granularity == "monthly" {
-		snapshots, err := h.Store.ListAnalyticsSnapshotsAggregated(c, productID, from, to, granularity)
+		snapshots, err := h.Store.ListAnalyticsSnapshotsAggregated(c, tenantID(c), productID, from, to, granularity)
 		if err != nil {
 			response.Internal(c, err)
 			return
@@ -3896,7 +3978,7 @@ func (h *AdminHandler) ListAnalytics(c *gin.Context) {
 		return
 	}
 
-	snapshots, err := h.Store.ListAnalyticsSnapshots(c, productID, from, to)
+	snapshots, err := h.Store.ListAnalyticsSnapshots(c, tenantID(c), productID, from, to)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -3906,6 +3988,7 @@ func (h *AdminHandler) ListAnalytics(c *gin.Context) {
 
 func analyticsFilter(c *gin.Context) store.AnalyticsFilter {
 	f := store.AnalyticsFilter{
+		TenantID:    tenantID(c),
 		ProductID:   c.Query("product_id"),
 		PlanID:      c.Query("plan_id"),
 		LicenseType: c.Query("license_type"),
@@ -3981,7 +4064,7 @@ func (h *AdminHandler) AnalyticsUsageTop(c *gin.Context) {
 		to, _ = endOfDay(v)
 	}
 	limit := queryInt(c, "limit", 10)
-	features, err := h.Store.GetTopFeatureUsage(c, productID, from, to, limit)
+	features, err := h.Store.GetTopFeatureUsage(c, tenantID(c), productID, from, to, limit)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -4000,7 +4083,7 @@ func (h *AdminHandler) AnalyticsActivationTrend(c *gin.Context) {
 		// day, which is usually today.
 		to, _ = endOfDay(v)
 	}
-	trend, err := h.Store.GetActivationTrend(c, productID, from, to)
+	trend, err := h.Store.GetActivationTrend(c, tenantID(c), productID, from, to)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -4010,15 +4093,15 @@ func (h *AdminHandler) AnalyticsActivationTrend(c *gin.Context) {
 
 func (h *AdminHandler) AnalyticsInsights(c *gin.Context) {
 	f := analyticsFilter(c)
-	growth, err := h.Store.GetGrowthMetrics(c, f.ProductID)
+	growth, err := h.Store.GetGrowthMetrics(c, f.TenantID, f.ProductID)
 	if err != nil {
 		response.Internal(c, err)
 		return
 	}
-	ageDist, _ := h.Store.GetLicenseAgeDistribution(c, f.ProductID)
-	topUsers, _ := h.Store.GetTopUsers(c, f.ProductID, queryInt(c, "top_limit", 10))
-	retention, _ := h.Store.GetRetentionData(c, f.ProductID, queryInt(c, "months", 6))
-	recentActivity, _ := h.Store.GetRecentActivity(c, f.ProductID, queryInt(c, "activity_limit", 20))
+	ageDist, _ := h.Store.GetLicenseAgeDistribution(c, f.TenantID, f.ProductID)
+	topUsers, _ := h.Store.GetTopUsers(c, f.TenantID, f.ProductID, queryInt(c, "top_limit", 10))
+	retention, _ := h.Store.GetRetentionData(c, f.TenantID, f.ProductID, queryInt(c, "months", 6))
+	recentActivity, _ := h.Store.GetRecentActivity(c, f.TenantID, f.ProductID, queryInt(c, "activity_limit", 20))
 
 	response.OK(c, gin.H{
 		"growth":           growth,
@@ -4031,7 +4114,7 @@ func (h *AdminHandler) AnalyticsInsights(c *gin.Context) {
 
 func (h *AdminHandler) GetUserDetail(c *gin.Context) {
 	id := c.Param("id")
-	detail, err := h.Store.GetUserDetail(c, id)
+	detail, err := h.Store.GetUserDetail(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "user not found")
 		return
@@ -4063,7 +4146,7 @@ func (h *AdminHandler) GetUserDetail(c *gin.Context) {
 
 func (h *AdminHandler) ListAddons(c *gin.Context) {
 	page := listPage(c)
-	addons, total, err := h.Store.ListAddons(c, c.Query("product_id"), c.Query("search"), page)
+	addons, total, err := h.Store.ListAddons(c, tenantID(c), c.Query("product_id"), c.Query("search"), page)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -4113,7 +4196,18 @@ func (h *AdminHandler) CreateAddon(c *gin.Context) {
 		return
 	}
 
+	switch _, err := h.Store.FindProductForTenant(c, tenantID(c), req.ProductID); {
+	case err == nil:
+	case errors.Is(err, sql.ErrNoRows):
+		response.NotFound(c, "product not found")
+		return
+	default:
+		response.Internal(c, err)
+		return
+	}
+
 	a := &model.Addon{
+		TenantID:  tenantID(c),
 		ProductID: req.ProductID, Name: req.Name, Slug: req.Slug,
 		Description: req.Description, Feature: req.Feature,
 		ValueType: req.ValueType, Value: req.Value,
@@ -4141,7 +4235,7 @@ func (h *AdminHandler) CreateAddon(c *gin.Context) {
 }
 
 func (h *AdminHandler) UpdateAddon(c *gin.Context) {
-	a, err := h.Store.FindAddonByID(c, c.Param("id"))
+	a, err := h.Store.FindAddonForTenant(c, tenantID(c), c.Param("id"))
 	if err != nil {
 		response.NotFound(c, "addon not found")
 		return
@@ -4245,7 +4339,7 @@ func (h *AdminHandler) UpdateAddon(c *gin.Context) {
 
 func (h *AdminHandler) DeleteAddon(c *gin.Context) {
 	pid := h.Store.ProductOfAudited(c, "addon", c.Param("id")) // gone after the delete
-	if err := h.Store.DeleteAddon(c, c.Param("id")); err != nil {
+	if err := h.Store.DeleteAddonForTenant(c, tenantID(c), c.Param("id")); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			response.NotFound(c, "addon not found")
 			return
@@ -4262,7 +4356,7 @@ func (h *AdminHandler) DeleteAddon(c *gin.Context) {
 
 func (h *AdminHandler) AddLicenseAddon(c *gin.Context) {
 	id := c.Param("id")
-	productID, err := h.Store.GetLicenseProductID(c, id)
+	productID, err := h.Store.GetLicenseProductIDForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
@@ -4277,7 +4371,7 @@ func (h *AdminHandler) AddLicenseAddon(c *gin.Context) {
 		response.BadRequest(c, "addon_id is required")
 		return
 	}
-	addon, err := h.Store.FindAddonByID(c, req.AddonID)
+	addon, err := h.Store.FindAddonForTenant(c, tenantID(c), req.AddonID)
 	if errors.Is(err, sql.ErrNoRows) {
 		response.NotFound(c, "addon not found")
 		return
@@ -4294,7 +4388,7 @@ func (h *AdminHandler) AddLicenseAddon(c *gin.Context) {
 			"addon does not belong to the license's product")
 		return
 	}
-	la := &model.LicenseAddon{LicenseID: id, AddonID: req.AddonID, Enabled: true}
+	la := &model.LicenseAddon{TenantID: addon.TenantID, LicenseID: id, AddonID: req.AddonID, Enabled: true}
 	created, err := h.Store.AddLicenseAddon(c, la)
 	if err != nil {
 		if errors.Is(err, store.ErrAddonInactive) {
@@ -4391,7 +4485,7 @@ func (h *AdminHandler) ChangeLicensePlan(c *gin.Context) {
 		return
 	}
 
-	l, err := h.Store.FindLicenseByID(c, id)
+	l, err := h.Store.FindLicenseForTenant(c, tenantID(c), id)
 	if err != nil {
 		response.NotFound(c, "license not found")
 		return
@@ -4400,7 +4494,7 @@ func (h *AdminHandler) ChangeLicensePlan(c *gin.Context) {
 		return
 	}
 
-	plan, err := h.Store.FindPlanByID(c, req.PlanID)
+	plan, err := h.Store.FindPlanForTenant(c, tenantID(c), req.PlanID)
 	if err != nil {
 		response.NotFound(c, "plan not found")
 		return
@@ -4411,7 +4505,7 @@ func (h *AdminHandler) ChangeLicensePlan(c *gin.Context) {
 	}
 
 	oldPlanID := l.PlanID
-	oldPlan, err := h.Store.FindPlanByID(c, oldPlanID)
+	oldPlan, err := h.Store.FindPlanForTenant(c, tenantID(c), oldPlanID)
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -4717,7 +4811,7 @@ func (h *AdminHandler) ChangeLicensePlan(c *gin.Context) {
 
 	if h.Email != nil && l.Email != "" {
 		productName := ""
-		if prod, perr := h.Store.FindProductByID(c, l.ProductID); perr == nil {
+		if prod, perr := h.Store.FindProductForTenant(c, tenantID(c), l.ProductID); perr == nil {
 			productName = prod.Name
 		}
 		h.Email.SendPlanChanged(l.Email, productName, oldPlan.Name, plan.Name)
@@ -4813,7 +4907,7 @@ var settingsServerOwned = map[string]bool{
 }
 
 func (h *AdminHandler) GetSettings(c *gin.Context) {
-	settings, err := h.Store.GetSettings(c)
+	settings, err := h.Store.GetSettingsForTenant(c, settingsTenant(c))
 	if err != nil {
 		response.Internal(c, err)
 		return
@@ -4870,7 +4964,7 @@ func emailWriteTouchesConfig(writes map[string]string) bool {
 // they are in this save or already stored (a blank secret means "keep
 // the existing one").
 func (h *AdminHandler) validateEmailProvider(c *gin.Context, provider string, writes map[string]string) string {
-	stored, _ := h.Store.GetSettings(c)
+	stored, _ := h.Store.GetSettingsForTenant(c, settingsTenant(c))
 	has := func(key string) bool {
 		if v, ok := writes[key]; ok {
 			return strings.TrimSpace(v) != ""
@@ -4976,7 +5070,7 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 	if emailWriteTouchesConfig(writes) {
 		provider := writes["email_provider"]
 		if provider == "" {
-			stored, err := h.Store.GetSetting(c, "email_provider")
+			stored, err := h.Store.GetSettingForTenant(c, settingsTenant(c), "email_provider")
 			// ErrNoRows is a genuine "no provider set" (fresh install) —
 			// treat as empty and let a full config be validated below. Any
 			// other read error must NOT be swallowed: proceeding as if no
@@ -5040,7 +5134,7 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	if err := h.Store.SetSettings(c, writes); err != nil {
+	if err := h.Store.SetSettingsForTenant(c, settingsTenant(c), writes); err != nil {
 		// A missing master key is an operator config problem, not a
 		// server fault: say so plainly instead of a bare 500.
 		if errors.Is(err, store.ErrSecretEncryptionUnavailable) {
@@ -5078,7 +5172,7 @@ func (h *AdminHandler) ClearSecretSetting(c *gin.Context) {
 		return
 	}
 
-	if err := h.Store.DeleteSetting(c, key); err != nil {
+	if err := h.Store.DeleteSettingForTenant(c, settingsTenant(c), key); err != nil {
 		response.Internal(c, err)
 		return
 	}
@@ -5173,46 +5267,83 @@ func (h *AdminHandler) GetEmailTemplates(c *gin.Context) {
 
 	result := make(map[string]templateInfo, len(defaults))
 	for key, def := range defaults {
-		custom, _ := h.Store.GetSetting(c, "email_template_"+key)
+		custom, _ := h.Store.GetSettingForTenant(c, settingsTenant(c), "email_template_"+key)
 		result[key] = templateInfo{Custom: custom, Default: def}
 	}
 
 	response.OK(c, gin.H{"templates": result})
 }
 
-// ─── Team (Admin Management) ───
+// ─── Team (tenant membership) ───
 
-// ListTeamMembers returns all platform admins (owner + admin roles).
+// teamMemberView is a tenant membership shaped like the user objects
+// the team page renders. role is the role in this workspace, not the
+// platform role in users.role.
+type teamMemberView struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	AvatarURL string    `json:"avatar_url,omitempty"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func memberView(m *model.TenantMember) teamMemberView {
+	if m.User == nil {
+		return teamMemberView{Role: m.Role, CreatedAt: m.CreatedAt}
+	}
+	return teamMemberView{
+		ID:        m.User.ID,
+		Email:     m.User.Email,
+		Name:      m.User.Name,
+		AvatarURL: m.User.AvatarURL,
+		Role:      m.Role,
+		CreatedAt: m.CreatedAt,
+	}
+}
+
+// ListTeamMembers returns the members of the current workspace.
 func (h *AdminHandler) ListTeamMembers(c *gin.Context) {
 	page := listPage(c)
-	admins, total, err := h.Store.ListAdmins(c, page)
+	members, total, err := h.Store.ListTenantMembersPage(c, tenantID(c), page)
 	if err != nil {
 		response.Internal(c, err)
 		return
 	}
-	listOK(c, "members", admins, total, page)
+	views := make([]teamMemberView, 0, len(members))
+	for _, m := range members {
+		views = append(views, memberView(m))
+	}
+	listOK(c, "members", views, total, page)
 }
 
-// InviteTeamMember sets a user's team role to admin or owner, creating a
-// plain placeholder user first for an address not seen yet. Every grant,
-// and demoting an owner to admin, runs through SetRoleAtomic. Only owners
-// can invite.
+// InviteTeamMember adds an account to the current workspace, creating a
+// plain placeholder user first for an address not seen yet. The role is
+// the tenant role (member, admin or owner); users.role, the platform
+// role, is not touched. Only a tenant owner (or a platform admin) can
+// invite.
 func (h *AdminHandler) InviteTeamMember(c *gin.Context) {
-	// Only owner can manage team
-	actorEmail, ok := c.Get("email")
-	if !ok {
+	if !platformAdminSession(c) {
+		response.Forbidden(c, "team management needs a signed-in administrator")
+		return
+	}
+	actorID := adminID(c)
+	if actorID == "" {
 		response.Unauthorized(c, "unauthorized")
 		return
 	}
-	actorUser, err := h.Store.FindUserByEmail(c, actorEmail.(string))
-	if err != nil || actorUser.Role != model.RoleOwner {
-		response.Forbidden(c, "only the owner can manage team members")
-		return
+	platformAdmin := actingAsPlatformAdmin(c)
+	if !platformAdmin {
+		m, err := h.Store.FindTenantMembership(c, tenantID(c), actorID)
+		if err != nil || m.Role != model.TenantRoleOwner {
+			response.Forbidden(c, "only the owner can manage team members")
+			return
+		}
 	}
 
 	var req struct {
 		Email string `json:"email" binding:"required"`
-		Role  string `json:"role"` // "admin" (default) or "owner"
+		Role  string `json:"role"` // "admin" (default), "owner" or "member"
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "email is required")
@@ -5229,28 +5360,18 @@ func (h *AdminHandler) InviteTeamMember(c *gin.Context) {
 
 	role := req.Role
 	if role == "" {
-		role = model.RoleAdmin
+		role = model.TenantRoleAdmin
 	}
-	if role != model.RoleAdmin && role != model.RoleOwner {
-		response.BadRequest(c, "role must be 'admin' or 'owner'")
+	if !model.IsValidTenantRole(role) {
+		response.BadRequest(c, "role must be 'member', 'admin' or 'owner'")
 		return
 	}
 
-	// Cannot invite yourself. EqualFold so "Owner@x.com" still trips
-	// the guard even if the actor row was stored mixed-case.
-	if strings.EqualFold(req.Email, actorUser.Email) {
-		response.BadRequest(c, "cannot change your own role via invite")
-		return
-	}
-
-	// Find or create user. Only a request that changed the role writes
-	// the audit entry and sends the email, so repeated or concurrent
-	// clicks do not spam the invitee.
+	// Find or create the global account. Only a request that changed
+	// the membership writes the audit entry and sends the email, so
+	// repeated or concurrent clicks do not spam the invitee.
 	user, err := h.Store.FindUserByEmail(c, req.Email)
 	if err != nil {
-		// Not seen yet: a plain placeholder row (the name arrives on first
-		// login), raised below like any other user, so the grant also runs
-		// under the team lock and its actor check.
 		if err := h.Store.CreatePlaceholderUser(c, req.Email); err != nil {
 			response.Internal(c, err)
 			return
@@ -5260,83 +5381,87 @@ func (h *AdminHandler) InviteTeamMember(c *gin.Context) {
 			return
 		}
 	}
-	// Under the team lock: inviting an owner as admin demotes them, and
-	// must not leave the install without an owner. The lock also decides
-	// whether anything changed, so concurrent identical invites count once.
-	previousRole, changed, err := h.Store.SetRoleAtomic(c, actorUser.ID, user.ID, role)
+	if user.ID == actorID {
+		response.BadRequest(c, "cannot change your own role via invite")
+		return
+	}
+
+	previousRole, _, changed, err := h.Store.UpsertTenantMemberAtomic(c, tenantID(c), actorID, user.ID, role, platformAdmin)
 	if err != nil {
-		// A placeholder created above stays as a plain user: harmless,
-		// and only left when the actor lost the owner role meanwhile.
 		teamRoleError(c, err)
 		return
 	}
-	if user, err = h.Store.FindUserByID(c, user.ID); err != nil {
-		response.Internal(c, err)
-		return
-	}
 	if !changed {
-		response.OK(c, user)
+		response.OK(c, memberView(&model.TenantMember{User: user, Role: role}))
 		return
 	}
 
 	h.Store.Audit(c, &model.AuditLog{
-		Entity: "team", EntityID: user.ID, Action: "member_invited",
-		ActorType: "admin", ActorID: adminID(c),
+		TenantID: tenantID(c),
+		Entity:   "team", EntityID: user.ID, Action: "member_invited",
+		ActorType: "admin", ActorID: actorID,
 		Changes: map[string]any{"email": req.Email, "role": role, "previous_role": previousRole},
 	})
 
-	// Notify the new admin via email. Best-effort: a send failure
-	// does NOT roll back the role grant (OTP login still works
-	// out-of-band). The inviter (actor) name is shown so the
-	// recipient knows who added them, which helps spot social
-	// engineering ("why am I suddenly admin on Keygate?").
+	// Notify the new member. Best-effort: a send failure does NOT roll
+	// back the grant (OTP login still works out-of-band). The inviter's
+	// name helps the recipient spot an unexpected grant.
 	if h.Email != nil {
-		siteName, _ := h.Store.GetSetting(c, "site_name")
+		siteName, _ := h.Store.GetSettingForTenant(c, tenantID(c), "site_name")
 		if siteName == "" {
 			siteName = "Keygate"
 		}
-		inviter := actorUser.Name
-		if inviter == "" {
-			inviter = actorUser.Email
+		inviter := ""
+		if actor, err := h.Store.FindUserByID(c, actorID); err == nil {
+			inviter = actor.Name
+			if inviter == "" {
+				inviter = actor.Email
+			}
 		}
-		h.Email.SendAdminInvite(req.Email, siteName, inviter, role)
+		h.Email.SendAdminInviteFor(tenantID(c), req.Email, siteName, inviter, role)
 	}
 
-	response.OK(c, user)
+	response.OK(c, memberView(&model.TenantMember{User: user, Role: role}))
 }
 
-// teamRoleError answers a failed SetRoleAtomic.
+// teamRoleError answers a failed tenant team change.
 func teamRoleError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, store.ErrLastOwner):
 		response.BadRequest(c, "cannot remove the last owner")
 	case errors.Is(err, store.ErrNotOwner):
 		response.Forbidden(c, "only the owner can manage team members")
-	case errors.Is(err, store.ErrUserNotFound):
+	case errors.Is(err, store.ErrUserNotFound), errors.Is(err, store.ErrTenantMemberNotFound):
 		response.NotFound(c, "user not found")
 	default:
 		response.Internal(c, err)
 	}
 }
 
-// RemoveTeamMember demotes an admin back to regular user.
-// Only owners can remove admins. Cannot remove the last owner.
+// RemoveTeamMember removes an account from the current workspace. The
+// global user row stays; only the membership goes. Only owners can
+// remove members, and the last owner cannot be removed.
 func (h *AdminHandler) RemoveTeamMember(c *gin.Context) {
-	actorEmail, ok := c.Get("email")
-	if !ok {
+	if !platformAdminSession(c) {
+		response.Forbidden(c, "team management needs a signed-in administrator")
+		return
+	}
+	actorID := adminID(c)
+	if actorID == "" {
 		response.Unauthorized(c, "unauthorized")
 		return
 	}
-	actorUser, err := h.Store.FindUserByEmail(c, actorEmail.(string))
-	if err != nil || actorUser.Role != model.RoleOwner {
-		response.Forbidden(c, "only the owner can manage team members")
-		return
+	platformAdmin := actingAsPlatformAdmin(c)
+	if !platformAdmin {
+		m, err := h.Store.FindTenantMembership(c, tenantID(c), actorID)
+		if err != nil || m.Role != model.TenantRoleOwner {
+			response.Forbidden(c, "only the owner can manage team members")
+			return
+		}
 	}
 
 	targetID := c.Param("id")
-
-	// Can't remove yourself
-	if targetID == actorUser.ID {
+	if targetID == actorID {
 		response.BadRequest(c, "cannot remove yourself from the team")
 		return
 	}
@@ -5347,16 +5472,9 @@ func (h *AdminHandler) RemoveTeamMember(c *gin.Context) {
 		return
 	}
 
-	if !target.IsAdmin() {
-		response.BadRequest(c, "user is not a team member")
-		return
-	}
-
-	// Atomic demote: SetRoleAtomic serialises every team change so the
-	// last-owner invariant holds even under racing requests. The
-	// non-atomic "count then update" pattern that lived here previously
-	// could be tricked into zero owners by two simultaneous calls.
-	previousRole, changed, err := h.Store.SetRoleAtomic(c, actorUser.ID, targetID, model.RoleUser)
+	// The removal runs under the team lock so the last-owner invariant
+	// holds even when two owners are removed at once.
+	previousRole, changed, err := h.Store.RemoveTenantMemberAtomic(c, tenantID(c), actorID, targetID, platformAdmin)
 	if err != nil {
 		teamRoleError(c, err)
 		return
@@ -5368,8 +5486,9 @@ func (h *AdminHandler) RemoveTeamMember(c *gin.Context) {
 	}
 
 	h.Store.Audit(c, &model.AuditLog{
-		Entity: "team", EntityID: targetID, Action: "member_removed",
-		ActorType: "admin", ActorID: adminID(c),
+		TenantID: tenantID(c),
+		Entity:   "team", EntityID: targetID, Action: "member_removed",
+		ActorType: "admin", ActorID: actorID,
 		Changes: map[string]any{"email": target.Email, "previous_role": previousRole},
 	})
 
@@ -5391,7 +5510,7 @@ func (h *AdminHandler) ExportLicenses(c *gin.Context) {
 	if !ok {
 		return
 	}
-	licenses, err := h.Store.ExportLicenses(c, productID, c.Query("status"))
+	licenses, err := h.Store.ExportLicenses(c, tenantID(c), productID, c.Query("status"))
 	if err != nil {
 		response.Internal(c, err)
 		return

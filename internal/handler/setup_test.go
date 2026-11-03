@@ -120,7 +120,7 @@ func TestSetupClosedOnExistingInstall(t *testing.T) {
 	if !status() {
 		t.Fatal("setup should reopen on a database emptied of admins and products")
 	}
-	exec("INSERT INTO settings (key, value) VALUES ('setup_complete', 'true')")
+	exec("INSERT INTO settings (tenant_id, key, value) VALUES ('', 'setup_complete', 'true')")
 	if status() {
 		t.Error("setup offered with setup_complete set")
 	}

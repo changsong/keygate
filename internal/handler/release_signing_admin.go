@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/service"
 	"github.com/tabloy/keygate/internal/store"
@@ -32,12 +33,12 @@ func NewReleaseSigningAdminHandler(svc *service.ReleaseSigningService, st *store
 // already exists; the admin must rotate instead.
 func (h *ReleaseSigningAdminHandler) Generate(c *gin.Context) {
 	productID := c.Param("id")
-	if _, err := h.store.FindProductByID(c.Request.Context(), productID); err != nil {
+	if _, err := h.store.FindProductForTenant(c.Request.Context(), middleware.TenantIDFrom(c), productID); err != nil {
 		response.NotFound(c, "product not found")
 		return
 	}
 
-	key, err := h.svc.GenerateForProduct(c.Request.Context(), productID)
+	key, err := h.svc.GenerateForProduct(c.Request.Context(), middleware.TenantIDFrom(c), productID)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrSigningDisabled):
@@ -70,7 +71,7 @@ func (h *ReleaseSigningAdminHandler) Generate(c *gin.Context) {
 // Generates a new active key and deactivates the previous one (if any).
 func (h *ReleaseSigningAdminHandler) Rotate(c *gin.Context) {
 	productID := c.Param("id")
-	if _, err := h.store.FindProductByID(c.Request.Context(), productID); err != nil {
+	if _, err := h.store.FindProductForTenant(c.Request.Context(), middleware.TenantIDFrom(c), productID); err != nil {
 		response.NotFound(c, "product not found")
 		return
 	}
@@ -84,7 +85,7 @@ func (h *ReleaseSigningAdminHandler) Rotate(c *gin.Context) {
 		return
 	}
 
-	key, err := h.svc.RotateForProduct(c.Request.Context(), productID, req.Note)
+	key, err := h.svc.RotateForProduct(c.Request.Context(), middleware.TenantIDFrom(c), productID, req.Note)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrSigningDisabled):
@@ -123,7 +124,7 @@ func (h *ReleaseSigningAdminHandler) Rotate(c *gin.Context) {
 // then inactive sorted by creation time desc.
 func (h *ReleaseSigningAdminHandler) List(c *gin.Context) {
 	productID := c.Param("id")
-	if _, err := h.store.FindProductByID(c.Request.Context(), productID); err != nil {
+	if _, err := h.store.FindProductForTenant(c.Request.Context(), middleware.TenantIDFrom(c), productID); err != nil {
 		response.NotFound(c, "product not found")
 		return
 	}
@@ -142,7 +143,7 @@ func (h *ReleaseSigningAdminHandler) List(c *gin.Context) {
 // public_key.pem next to Sparkle's Info.plist or Tauri's tauri.conf.json).
 func (h *ReleaseSigningAdminHandler) DownloadPublicKey(c *gin.Context) {
 	productID := c.Param("id")
-	if _, err := h.store.FindProductByID(c.Request.Context(), productID); err != nil {
+	if _, err := h.store.FindProductForTenant(c.Request.Context(), middleware.TenantIDFrom(c), productID); err != nil {
 		response.NotFound(c, "product not found")
 		return
 	}
@@ -170,7 +171,7 @@ func (h *ReleaseSigningAdminHandler) DownloadPublicKey(c *gin.Context) {
 // this shape; the raw PEM/Sparkle key fails Tauri's verifier.
 func (h *ReleaseSigningAdminHandler) DownloadPublicKeyTauri(c *gin.Context) {
 	productID := c.Param("id")
-	if _, err := h.store.FindProductByID(c.Request.Context(), productID); err != nil {
+	if _, err := h.store.FindProductForTenant(c.Request.Context(), middleware.TenantIDFrom(c), productID); err != nil {
 		response.NotFound(c, "product not found")
 		return
 	}
@@ -197,7 +198,7 @@ func (h *ReleaseSigningAdminHandler) DownloadPublicKeyTauri(c *gin.Context) {
 // Request body: { "note": "..." }  // optional
 func (h *ReleaseSigningAdminHandler) Deactivate(c *gin.Context) {
 	productID := c.Param("id")
-	if _, err := h.store.FindProductByID(c.Request.Context(), productID); err != nil {
+	if _, err := h.store.FindProductForTenant(c.Request.Context(), middleware.TenantIDFrom(c), productID); err != nil {
 		response.NotFound(c, "product not found")
 		return
 	}

@@ -494,7 +494,7 @@ func (s *Store) CountOwners(ctx context.Context) (int, error) {
 // open on installs whose admins never became owner (#42). Pass the setup
 // transaction as db to check under its lock.
 func (s *Store) SetupNeeded(ctx context.Context, db bun.IDB) (bool, error) {
-	complete, err := getSettingIn(ctx, db, "setup_complete")
+	complete, err := getSettingIn(ctx, db, "", "setup_complete")
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
@@ -848,6 +848,7 @@ func (s *Store) createLicenseWithSubscription(ctx context.Context, l *model.Lice
 
 	if plan != nil && (planType == "subscription" || planType == "trial") {
 		sub := &model.Subscription{
+			TenantID:  l.TenantID,
 			ID:        newID(),
 			LicenseID: l.ID,
 			PlanID:    plan.ID,
@@ -1328,23 +1329,41 @@ func updateLicenseAndSubscriptionIn(ctx context.Context, tx bun.Tx, lic *model.L
 	return nil
 }
 
-func (s *Store) ListLicensesByEmail(ctx context.Context, email string) ([]*model.License, error) {
+// ListLicensesByEmail is ListLicensesByEmailIn for the default tenant,
+// which is every install with multi-tenancy off and every test.
+func (s *Store) ListLicensesByEmail(ctx context.Context, userID, email string) ([]*model.License, error) {
+	return s.ListLicensesByEmailIn(ctx, model.DefaultTenantID, userID, email)
+}
+
+// ListLicensesByEmailIn reads the licences and seats an identity can see
+// inside one workspace. Every branch of the union is narrowed to
+// tenantID: a seat or licence in another tenant never leaks through the
+// account's shared address.
+func (s *Store) ListLicensesByEmailIn(ctx context.Context, tenantID, userID, email string) ([]*model.License, error) {
 	var out []*model.License
-	// Include licenses owned by email OR where user has a seat they have
-	// accepted: an invite not yet taken up shows nothing. Matched
-	// case-insensitively: a licence keeps the address as it was typed,
-	// and the portal session carries the lower-cased sign-in address.
+	// Include licences bound to this user, licences not yet bound that
+	// carry this address, and accepted seats held either way: an invite
+	// not yet taken up shows nothing. The email branches require
+	// user_id IS NULL so an administrator's reassignment takes the old
+	// address's access away immediately; matching stays
+	// case-insensitive because a licence keeps the address as typed
+	// while the session carries the lower-cased sign-in address.
 	e := normalizeEmail(email)
 	err := s.DB.NewSelect().Model(&out).
 		Relation("Plan").Relation("Plan.Entitlements").
 		Relation("Product").Relation("Activations").Relation("Seats").
-		// One IN over a UNION ALL rather than "a = ? OR id IN (...)":
-		// the OR form makes Postgres scan every licence instead of
-		// using idx_licenses_email_lower.
-		Where(`license.id IN (
-			SELECT id FROM licenses WHERE lower(email) = ?
-			UNION ALL
-			SELECT license_id FROM seats WHERE lower(email) = ? AND removed_at IS NULL AND accepted_at IS NOT NULL)`, e, e).
+		// One IN over a UNION rather than OR chains: the OR form makes
+		// Postgres scan every licence instead of using the user/email
+		// indexes.
+		Where(`license.tenant_id = ? AND license.id IN (
+			SELECT id FROM licenses WHERE tenant_id = ? AND user_id = ?
+			UNION
+			SELECT id FROM licenses WHERE tenant_id = ? AND user_id IS NULL AND lower(email) = ?
+			UNION
+			SELECT license_id FROM seats WHERE tenant_id = ? AND user_id = ? AND removed_at IS NULL AND accepted_at IS NOT NULL
+			UNION
+			SELECT license_id FROM seats WHERE tenant_id = ? AND user_id IS NULL AND lower(email) = ? AND removed_at IS NULL AND accepted_at IS NOT NULL)`,
+			tenantID, tenantID, userID, tenantID, e, tenantID, userID, tenantID, e).
 		OrderExpr("license.created_at DESC, license.id DESC").Scan(ctx)
 	if err != nil {
 		return nil, err
@@ -1375,18 +1394,38 @@ func (s *Store) ListLicensesByEmail(ctx context.Context, email string) ([]*model
 // would lock that customer out of an installation that runs
 // signup_mode=licensed_only.
 func (s *Store) HasAccountOrLicense(ctx context.Context, email string) (bool, error) {
+	return s.HasAccountOrLicenseIn(ctx, "", email)
+}
+
+// HasAccountOrLicenseIn answers the same question scoped to one
+// workspace. A blank tenantID keeps the platform-wide answer the
+// Casdoor identity resolver needs; the login forms pass the workspace
+// the visitor is signing in to, where holding an account elsewhere is
+// not enough: they need a membership or an asset here.
+func (s *Store) HasAccountOrLicenseIn(ctx context.Context, tenantID, email string) (bool, error) {
 	e := strings.ToLower(strings.TrimSpace(email))
 	if e == "" {
 		return false, nil
 	}
 	var exists bool
+	if tenantID == "" {
+		err := s.DB.NewRaw(`SELECT EXISTS (
+			SELECT 1 FROM users WHERE email = ?
+			UNION ALL
+			SELECT 1 FROM licenses WHERE lower(email) = ?
+			UNION ALL
+			SELECT 1 FROM seats WHERE lower(email) = ? AND removed_at IS NULL
+		)`, e, e, e).Scan(ctx, &exists)
+		return exists, err
+	}
 	err := s.DB.NewRaw(`SELECT EXISTS (
-		SELECT 1 FROM users WHERE email = ?
+		SELECT 1 FROM tenant_members m JOIN users u ON u.id = m.user_id
+		WHERE m.tenant_id = ? AND u.email = ?
 		UNION ALL
-		SELECT 1 FROM licenses WHERE lower(email) = ?
+		SELECT 1 FROM licenses WHERE tenant_id = ? AND lower(email) = ?
 		UNION ALL
-		SELECT 1 FROM seats WHERE lower(email) = ? AND removed_at IS NULL
-	)`, e, e, e).Scan(ctx, &exists)
+		SELECT 1 FROM seats WHERE tenant_id = ? AND lower(email) = ? AND removed_at IS NULL
+	)`, tenantID, e, tenantID, e, tenantID, e).Scan(ctx, &exists)
 	return exists, err
 }
 
@@ -1402,6 +1441,9 @@ func (s *Store) UpdateLicenseUser(ctx context.Context, licenseID, userID string)
 // in here rather than as positional params so callers (handler +
 // future internal uses) don't have to grow a long argument list.
 type LicenseListFilter struct {
+	// TenantID narrows the list to one workspace; empty means every
+	// workspace, for internal callers and the platform console.
+	TenantID            string
 	ProductID           string
 	Status              string
 	Search              string
@@ -1434,6 +1476,9 @@ func (s *Store) ListLicenses(ctx context.Context, f LicenseListFilter) ([]*model
 	q := s.DB.NewSelect().Model((*model.License)(nil)).
 		Relation("Plan").Relation("Product")
 	q = applySort(q, sort, "license.id")
+	if f.TenantID != "" {
+		q = q.Where("license.tenant_id = ?", f.TenantID)
+	}
 	if f.ProductID != "" {
 		q = q.Where("license.product_id = ?", f.ProductID)
 	}
@@ -1573,8 +1618,30 @@ func (s *Store) FindPlanByCheckoutID(ctx context.Context, checkoutID string) (*m
 	return p, s.DB.NewSelect().Model(p).Relation("Entitlements").Where("checkout_id = ?", checkoutID).Scan(ctx)
 }
 
+// FindPlanByCheckoutIDForTenant reads the plan behind a public checkout
+// link only if it belongs to tenantID. An empty tenantID skips the
+// filter, for callers without a tenant context.
+func (s *Store) FindPlanByCheckoutIDForTenant(ctx context.Context, tenantID, checkoutID string) (*model.Plan, error) {
+	p := new(model.Plan)
+	q := s.DB.NewSelect().Model(p).Relation("Entitlements").Where("plan.checkout_id = ?", checkoutID)
+	if tenantID != "" {
+		q = q.Where("plan.tenant_id = ?", tenantID)
+	}
+	return p, q.Scan(ctx)
+}
+
 func (s *Store) FindPlanByID(ctx context.Context, id string) (*model.Plan, error) {
 	return FindPlanByIDIn(ctx, s.DB, id)
+}
+
+// FindPlanForTenant reads a plan only if it belongs to tenantID.
+func (s *Store) FindPlanForTenant(ctx context.Context, tenantID, id string) (*model.Plan, error) {
+	p := new(model.Plan)
+	q := s.DB.NewSelect().Model(p).Relation("Entitlements").Where("plan.id = ?", id)
+	if tenantID != "" {
+		q = q.Where("plan.tenant_id = ?", tenantID)
+	}
+	return p, q.Scan(ctx)
 }
 
 // FindPlanByIDIn reads the plan on a caller's transaction, for writers
@@ -1640,6 +1707,19 @@ func (s *Store) Audit(ctx context.Context, log *model.AuditLog) {
 		log.ID = newID()
 	}
 	entry := *log
+	// Tenant routes work inside a workspace, and platform staff acting
+	// inside one are recorded as such. Platform-console entries pass
+	// their target tenant and actor type explicitly.
+	if entry.TenantID == "" {
+		if id, ok := ctx.Value("tenant_id").(string); ok {
+			entry.TenantID = id
+		}
+	}
+	if entry.ActorType == "admin" {
+		if b, _ := ctx.Value("is_platform_admin").(bool); b {
+			entry.ActorType = "platform_admin"
+		}
+	}
 	go func() {
 		auditCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

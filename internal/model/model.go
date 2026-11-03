@@ -2,6 +2,7 @@ package model
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -24,6 +25,44 @@ type User struct {
 // IsAdmin returns true if the user has admin or owner role.
 func (u *User) IsAdmin() bool {
 	return u.Role == "owner" || u.Role == "admin"
+}
+
+// Identity is the signed-in caller as ownership checks see them.
+// UserID is the Keygate user row; Email is the address the session was
+// issued to. UserID wins when set: once a license is bound, a shared or
+// reassigned email must not hand access to someone else.
+type Identity struct {
+	UserID string
+	Email  string
+}
+
+// OwnedBy reports whether id acts as the licence's owner. A bound
+// licence (user_id set) admits only that user; the email that bought it
+// is billing contact data, not an access credential, and a reassignment
+// must take the old holder's access away at once. An unbound licence
+// still falls back to its address, which is how a customer sees a
+// licence bought or provisioned before they signed in.
+func (l *License) OwnedBy(id Identity) bool {
+	if l == nil {
+		return false
+	}
+	if l.UserID != "" {
+		return id.UserID != "" && l.UserID == id.UserID
+	}
+	return id.Email != "" && strings.EqualFold(l.Email, id.Email)
+}
+
+// HeldBy reports whether id holds this seat, by the same rule as
+// OwnedBy: once bound, only the user it was bound to; otherwise its
+// address. Callers still filter accepted, unremoved seats.
+func (s *Seat) HeldBy(id Identity) bool {
+	if s == nil {
+		return false
+	}
+	if s.UserID != "" {
+		return id.UserID != "" && s.UserID == id.UserID
+	}
+	return id.Email != "" && strings.EqualFold(s.Email, id.Email)
 }
 
 const (
@@ -129,10 +168,11 @@ func ProductTypesSupporting(capability string) []string {
 type Product struct {
 	bun.BaseModel `bun:"table:products"`
 
-	ID   string `bun:",pk" json:"id"`
-	Name string `bun:",notnull" json:"name"`
-	Slug string `bun:",notnull,unique" json:"slug"`
-	Type string `bun:",notnull" json:"type"`
+	TenantID string `bun:",notnull,default:'t_default'" json:"-"`
+	ID       string `bun:",pk" json:"id"`
+	Name     string `bun:",notnull" json:"name"`
+	Slug     string `bun:",notnull,unique" json:"slug"`
+	Type     string `bun:",notnull" json:"type"`
 
 	// LicensePrefix is the first segment of the keys this product
 	// issues, 2 to 8 uppercase letters or digits. Changing it applies
@@ -183,6 +223,7 @@ type Product struct {
 type APIKey struct {
 	bun.BaseModel `bun:"table:api_keys"`
 
+	TenantID   string     `bun:",notnull,default:'t_default'" json:"-"`
 	ID         string     `bun:",pk" json:"id"`
 	ProductID  string     `bun:",nullzero" json:"product_id,omitempty"`
 	Name       string     `bun:",notnull" json:"name"`
@@ -248,6 +289,7 @@ func (a *APIKey) HasScope(scope string) bool {
 type Plan struct {
 	bun.BaseModel `bun:"table:plans"`
 
+	TenantID        string `bun:",notnull,default:'t_default'" json:"-"`
 	ID              string `bun:",pk" json:"id"`
 	ProductID       string `bun:",notnull" json:"product_id"`
 	Name            string `bun:",notnull" json:"name"`
@@ -339,6 +381,7 @@ type Entitlement struct {
 	bun.BaseModel `bun:"table:entitlements"`
 
 	ID          string `bun:",pk" json:"id"`
+	TenantID    string `bun:",notnull,default:'t_default'" json:"-"`
 	PlanID      string `bun:",notnull" json:"plan_id"`
 	Feature     string `bun:",notnull" json:"feature"`
 	ValueType   string `bun:",notnull" json:"value_type"`
@@ -364,6 +407,7 @@ const FeedPublicMaxAge = 60 * time.Second
 type License struct {
 	bun.BaseModel `bun:"table:licenses"`
 
+	TenantID  string `bun:",notnull,default:'t_default'" json:"-"`
 	ID        string `bun:",pk" json:"id"`
 	ProductID string `bun:",notnull" json:"product_id"`
 	PlanID    string `bun:",notnull" json:"plan_id"`
@@ -607,6 +651,7 @@ type Activation struct {
 type AuditLog struct {
 	bun.BaseModel `bun:"table:audit_logs"`
 
+	TenantID  string         `bun:",notnull,default:'t_default'" json:"-"`
 	ID        string         `bun:",pk" json:"id"`
 	Entity    string         `bun:",notnull" json:"entity"`
 	EntityID  string         `bun:",notnull" json:"entity_id"`
@@ -624,6 +669,7 @@ type AuditLog struct {
 // ─── Seat ───
 type Seat struct {
 	bun.BaseModel `bun:"table:seats"`
+	TenantID      string     `bun:",notnull,default:'t_default'" json:"-"`
 	ID            string     `bun:",pk" json:"id"`
 	LicenseID     string     `bun:",notnull" json:"license_id"`
 	UserID        string     `bun:",nullzero" json:"user_id,omitempty"`
@@ -672,6 +718,7 @@ func JoinedSeats(seats []*Seat) []*Seat {
 type UsageEvent struct {
 	bun.BaseModel `bun:"table:usage_events"`
 	ID            string         `bun:",pk" json:"id"`
+	TenantID      string         `bun:",notnull,default:'t_default'" json:"-"`
 	LicenseID     string         `bun:",notnull" json:"license_id"`
 	Feature       string         `bun:",notnull" json:"feature"`
 	Quantity      int64          `bun:",notnull,default:1" json:"quantity"`
@@ -683,6 +730,7 @@ type UsageEvent struct {
 type UsageCounter struct {
 	bun.BaseModel `bun:"table:usage_counters"`
 	ID            string    `bun:",pk" json:"id"`
+	TenantID      string    `bun:",notnull,default:'t_default'" json:"-"`
 	LicenseID     string    `bun:",notnull" json:"license_id"`
 	Feature       string    `bun:",notnull" json:"feature"`
 	Period        string    `bun:",notnull" json:"period"`
@@ -694,6 +742,7 @@ type UsageCounter struct {
 // ─── Webhook ───
 type Webhook struct {
 	bun.BaseModel `bun:"table:webhooks"`
+	TenantID      string    `bun:",notnull,default:'t_default'" json:"-"`
 	ID            string    `bun:",pk" json:"id"`
 	ProductID     string    `bun:",notnull" json:"product_id"`
 	URL           string    `bun:",notnull" json:"url"`
@@ -708,6 +757,7 @@ type Webhook struct {
 type WebhookDelivery struct {
 	bun.BaseModel `bun:"table:webhook_deliveries"`
 	ID            string         `bun:",pk" json:"id"`
+	TenantID      string         `bun:",notnull,default:'t_default'" json:"-"`
 	WebhookID     string         `bun:",notnull" json:"webhook_id"`
 	Event         string         `bun:",notnull" json:"event"`
 	Payload       map[string]any `bun:"type:jsonb,default:'{}'" json:"payload"`
@@ -726,6 +776,7 @@ type WebhookDelivery struct {
 // ─── Subscription ───
 type Subscription struct {
 	bun.BaseModel      `bun:"table:subscriptions"`
+	TenantID           string         `bun:",notnull,default:'t_default'" json:"-"`
 	ID                 string         `bun:",pk" json:"id"`
 	LicenseID          string         `bun:",notnull" json:"license_id"`
 	UserID             string         `bun:",nullzero" json:"user_id,omitempty"`
@@ -750,6 +801,7 @@ type Subscription struct {
 type AnalyticsSnapshot struct {
 	bun.BaseModel    `bun:"table:analytics_snapshots"`
 	ID               string    `bun:",pk" json:"id"`
+	TenantID         string    `bun:",notnull,default:'t_default'" json:"-"`
 	Date             time.Time `bun:",notnull" json:"date"`
 	ProductID        string    `bun:",notnull" json:"product_id"`
 	TotalLicenses    int       `bun:",notnull,default:0" json:"total_licenses"`
@@ -766,6 +818,7 @@ type AnalyticsSnapshot struct {
 type FloatingSession struct {
 	bun.BaseModel `bun:"table:floating_sessions"`
 	ID            string    `bun:",pk" json:"id"`
+	TenantID      string    `bun:",notnull,default:'t_default'" json:"-"`
 	LicenseID     string    `bun:",notnull" json:"license_id"`
 	Identifier    string    `bun:",notnull" json:"identifier"`
 	Label         string    `json:"label,omitempty"`
@@ -782,6 +835,7 @@ type FloatingSession struct {
 type Addon struct {
 	bun.BaseModel `bun:"table:addons"`
 	ID            string    `bun:",pk" json:"id"`
+	TenantID      string    `bun:",notnull,default:'t_default'" json:"-"`
 	ProductID     string    `bun:",notnull" json:"product_id"`
 	Name          string    `bun:",notnull" json:"name"`
 	Slug          string    `bun:",notnull" json:"slug"`
@@ -801,6 +855,7 @@ type Addon struct {
 type LicenseAddon struct {
 	bun.BaseModel `bun:"table:license_addons"`
 	ID            string    `bun:",pk" json:"id"`
+	TenantID      string    `bun:",notnull,default:'t_default'" json:"-"`
 	LicenseID     string    `bun:",notnull" json:"license_id"`
 	AddonID       string    `bun:",notnull" json:"addon_id"`
 	Enabled       bool      `bun:",notnull,default:true" json:"enabled"`
@@ -818,6 +873,7 @@ type PlanUpdateTerms struct {
 	bun.BaseModel `bun:"table:plan_update_terms"`
 
 	ID          string `bun:",pk" json:"id"`
+	TenantID    string `bun:",notnull,default:'t_default'" json:"-"`
 	PlanID      string `bun:",notnull" json:"plan_id"`
 	UpdatesDays int    `bun:",notnull" json:"updates_days"`
 	// LicenseType is the kind of licence the plan sold then: a Stripe
@@ -843,6 +899,7 @@ type LicenseRenewal struct {
 	bun.BaseModel `bun:"table:license_renewals"`
 
 	ID                      string     `bun:",pk" json:"id"`
+	TenantID                string     `bun:",notnull,default:'t_default'" json:"-"`
 	LicenseID               string     `bun:",notnull" json:"license_id"`
 	StripeCheckoutSessionID string     `bun:",notnull,default:''" json:"stripe_checkout_session_id,omitempty"`
 	StripePaymentIntentID   string     `bun:",notnull,default:''" json:"stripe_payment_intent_id,omitempty"`
@@ -879,6 +936,7 @@ type LicenseUpgrade struct {
 	bun.BaseModel `bun:"table:license_upgrades"`
 
 	ID                      string     `bun:",pk" json:"id"`
+	TenantID                string     `bun:",notnull,default:'t_default'" json:"-"`
 	LicenseID               string     `bun:",notnull" json:"license_id"`
 	ToPlanID                string     `bun:",nullzero" json:"to_plan_id,omitempty"`
 	State                   string     `bun:",notnull" json:"state"`
@@ -1072,6 +1130,7 @@ func RenewedUpdatesUntil(current *time.Time, now time.Time, days int) time.Time 
 type MeteredBilling struct {
 	bun.BaseModel `bun:"table:metered_billing"`
 	ID            string     `bun:",pk" json:"id"`
+	TenantID      string     `bun:",notnull,default:'t_default'" json:"-"`
 	LicenseID     string     `bun:",notnull" json:"license_id"`
 	Feature       string     `bun:",notnull" json:"feature"`
 	Quantity      int64      `bun:",notnull" json:"quantity"`
@@ -1141,6 +1200,7 @@ type Release struct {
 	bun.BaseModel `bun:"table:releases"`
 
 	ID        string `bun:",pk" json:"id"`
+	TenantID  string `bun:",notnull,default:'t_default'" json:"-"`
 	ProductID string `bun:",notnull" json:"product_id"`
 
 	// Version is unique per product. v1.2.3 is one release; multiple
@@ -1181,6 +1241,7 @@ type ReleaseArtifact struct {
 	bun.BaseModel `bun:"table:release_artifacts"`
 
 	ID        string `bun:",pk" json:"id"`
+	TenantID  string `bun:",notnull,default:'t_default'" json:"-"`
 	ReleaseID string `bun:",notnull" json:"release_id"`
 
 	Platform string `bun:",notnull" json:"platform"`
@@ -1238,6 +1299,7 @@ type ReleaseSigningKey struct {
 	bun.BaseModel `bun:"table:release_signing_keys"`
 
 	ID                  string     `bun:",pk" json:"id"`
+	TenantID            string     `bun:",notnull,default:'t_default'" json:"-"`
 	ProductID           string     `bun:",notnull" json:"product_id"`
 	PublicKey           string     `bun:",notnull" json:"public_key"`
 	PrivateKeyEncrypted []byte     `bun:",notnull" json:"-"`

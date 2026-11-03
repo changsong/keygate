@@ -128,7 +128,7 @@ func TestUpgradePath_LegacyDataAndReplays(t *testing.T) {
 	if !ok || err != nil {
 		t.Fatalf("legacy session replay: ok=%v err=%v", ok, err)
 	}
-	lics, _ := s.ListLicensesByEmail(ctx, "legacy@example.com")
+	lics, _ := s.ListLicensesByEmail(ctx, "", "legacy@example.com")
 	if len(lics) != 1 {
 		t.Fatalf("legacy session replay created a second license (%d)", len(lics))
 	}
@@ -136,7 +136,7 @@ func TestUpgradePath_LegacyDataAndReplays(t *testing.T) {
 	if !ok || err != nil {
 		t.Fatalf("rolling-upgrade session replay: ok=%v err=%v", ok, err)
 	}
-	if lics, _ := s.ListLicensesByEmail(ctx, "rolling@example.com"); len(lics) != 1 {
+	if lics, _ := s.ListLicensesByEmail(ctx, "", "rolling@example.com"); len(lics) != 1 {
 		t.Fatalf("old-instance marker (1h old) was taken over as stale: %d licenses", len(lics))
 	}
 	code, out := signedWebhook(t, h, "whsec_upg", legacyEvent, "customer.subscription.updated", map[string]any{"id": "sub_x", "object": "subscription", "status": "active"})

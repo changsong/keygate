@@ -21,7 +21,7 @@ func TestFulfillCheckout_UsesProductPrefix(t *testing.T) {
 	if !fulfilOK(h, ctx, email, "", "", "", map[string]string{"plan_id": plan.ID, "session_id": "cs_test_prefix_" + plan.Slug}, "test") {
 		t.Fatal("checkout not fulfilled")
 	}
-	lics, err := s.ListLicensesByEmail(ctx, email)
+	lics, err := s.ListLicensesByEmail(ctx, "", email)
 	if err != nil || len(lics) != 1 {
 		t.Fatalf("licenses after checkout: %d, %v", len(lics), err)
 	}

@@ -51,7 +51,7 @@ func SyncLicenseSubscriptionIn(ctx context.Context, db bun.IDB, licenseID string
 		if plan.LicenseType != "subscription" && plan.LicenseType != "trial" {
 			return nil
 		}
-		sub = &model.Subscription{ID: newID(), LicenseID: licenseID, PlanID: plan.ID, Status: status}
+		sub = &model.Subscription{TenantID: plan.TenantID, ID: newID(), LicenseID: licenseID, PlanID: plan.ID, Status: status}
 		if plan.LicenseType == "trial" && validUntil != nil {
 			now := time.Now()
 			sub.TrialStart, sub.TrialEnd = &now, validUntil

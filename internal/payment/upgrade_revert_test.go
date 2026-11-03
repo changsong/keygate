@@ -314,27 +314,27 @@ func TestUpgrade_ConcurrentSessionsApplyOnce(t *testing.T) {
 // on a free plan, with Stripe configured and a paid plan to move to.
 func TestUpgradableLicenses(t *testing.T) {
 	f := newUpgradeFixture(t, "upflag")
-	ls, err := f.s.ListLicensesByEmail(f.ctx, f.lic.Email)
+	ls, err := f.s.ListLicensesByEmail(f.ctx, "", f.lic.Email)
 	if err != nil || len(ls) != 1 {
 		t.Fatalf("list: %v %d", err, len(ls))
 	}
-	if got, _ := f.h.UpgradableLicenses(f.ctx, f.lic.Email, ls); got[f.lic.ID] {
+	if got, _ := f.h.UpgradableLicenses(f.ctx, model.Identity{Email: f.lic.Email}, ls); got[f.lic.ID] {
 		t.Fatal("offered without Stripe configured")
 	}
 	prev := stripe.Key
 	stripe.Key = "sk_test_flag"
 	defer func() { stripe.Key = prev }()
-	if got, _ := f.h.UpgradableLicenses(f.ctx, f.lic.Email, ls); !got[f.lic.ID] {
+	if got, _ := f.h.UpgradableLicenses(f.ctx, model.Identity{Email: f.lic.Email}, ls); !got[f.lic.ID] {
 		t.Fatal("not offered to the owner of a free licence")
 	}
-	if got, _ := f.h.UpgradableLicenses(f.ctx, "seat@example.com", ls); got[f.lic.ID] {
+	if got, _ := f.h.UpgradableLicenses(f.ctx, model.Identity{Email: "seat@example.com"}, ls); got[f.lic.ID] {
 		t.Fatal("offered to someone who is not the owner")
 	}
 	f.paid.Active = false
 	if err := f.s.UpdatePlan(f.ctx, f.paid, "active"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := f.h.UpgradableLicenses(f.ctx, f.lic.Email, ls); got[f.lic.ID] {
+	if got, _ := f.h.UpgradableLicenses(f.ctx, model.Identity{Email: f.lic.Email}, ls); got[f.lic.ID] {
 		t.Fatal("offered with no paid plan to move to")
 	}
 }

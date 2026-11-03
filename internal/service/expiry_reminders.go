@@ -158,7 +158,7 @@ func (c *ExpiryChecker) remindExpiring(ctx context.Context, lic *model.License, 
 		productName = lic.Product.Name
 	}
 	trial := lic.Status == model.StatusTrialing
-	subject, body := c.email.RenderLicenseExpiring(productName, c.store.DecryptLicenseKey(lic),
+	subject, body := c.email.RenderLicenseExpiringFor(lic.TenantID, productName, c.store.DecryptLicenseKey(lic),
 		lic.ValidUntil.Format("2006-01-02"), daysLeft(left), trial, c.trialFallbackName(ctx, lic, trial))
 	switch err := c.store.EnqueueEmailAndCloseNotification(ctx, lic.Email, subject, body, token); {
 	case err == nil:

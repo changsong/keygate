@@ -92,6 +92,7 @@ func NewReleaseService(c ReleaseServiceConfig) *ReleaseService {
 
 // CreateReleaseInput describes a new logical release. No platform fields.
 type CreateReleaseInput struct {
+	TenantID     string
 	ProductID    string
 	Version      string
 	Channel      string
@@ -281,6 +282,7 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, in CreateReleaseInpu
 	}
 
 	rel := &model.Release{
+		TenantID:     in.TenantID,
 		ProductID:    in.ProductID,
 		Version:      in.Version,
 		Channel:      in.Channel,
@@ -335,6 +337,7 @@ func (s *ReleaseService) AddArtifact(ctx context.Context, in AddArtifactInput) (
 	fileKey := buildFileKey(rel.ProductID, in.Platform, rel.Version, in.Filename)
 
 	artifact := &model.ReleaseArtifact{
+		TenantID:    rel.TenantID,
 		ReleaseID:   in.ReleaseID,
 		Platform:    in.Platform,
 		Filename:    cleanUploadFilename(in.Filename),

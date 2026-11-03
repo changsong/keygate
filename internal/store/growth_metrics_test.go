@@ -72,7 +72,7 @@ func TestGrowthMetricsTrialConversion(t *testing.T) {
 	}
 	want := func(step string, total, converted int, rate float64) {
 		t.Helper()
-		gm, err := s.GetGrowthMetrics(ctx, prod.ID)
+		gm, err := s.GetGrowthMetrics(ctx, "", prod.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

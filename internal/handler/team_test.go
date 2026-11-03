@@ -12,13 +12,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/store"
 )
 
-// Invites grant roles through SetRoleAtomic: a new address becomes a
-// member, only a request that changed the role writes the audit entry
-// (so concurrent or repeated invites count once), and an actor who is
-// not an owner is refused.
+// Invites add a tenant membership: a new address becomes a member, only
+// a request that changed the membership writes the audit entry (so
+// concurrent or repeated invites count once), and an actor who is not a
+// tenant owner is refused.
 func TestInviteTeamMember(t *testing.T) {
 	s := scratchStore(t)
 	ctx := context.Background()
@@ -33,15 +34,23 @@ func TestInviteTeamMember(t *testing.T) {
 		}
 		return id
 	}
-	ownerID := insert("owner@example.com", "owner")
-	insert("helper@example.com", "admin")
+	membership := func(userID, role string) {
+		t.Helper()
+		if _, err := s.DB.ExecContext(ctx, "INSERT INTO tenant_members (tenant_id, user_id, role) VALUES (?, ?, ?) ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role", model.DefaultTenantID, userID, role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ownerID := insert("owner@example.com", "user")
+	helperID := insert("helper@example.com", "user")
+	membership(ownerID, "owner")
+	membership(helperID, "admin")
 
-	invite := func(actorEmail, actorID, body string) (int, string) {
+	invite := func(actorID, body string) (int, string) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/admin/team", strings.NewReader(body))
 		c.Request.Header.Set("Content-Type", "application/json")
-		c.Set("email", actorEmail)
+		c.Set("auth_type", "session")
 		c.Set("user_id", actorID)
 		h.InviteTeamMember(c)
 		var out struct {
@@ -70,14 +79,31 @@ func TestInviteTeamMember(t *testing.T) {
 		}
 		return n
 	}
+	tenantRole := func(email string) string {
+		t.Helper()
+		var role string
+		if err := s.DB.NewRaw(`SELECT tm.role FROM tenant_members tm JOIN users u ON u.id = tm.user_id
+			WHERE tm.tenant_id = ? AND u.email = ?`, model.DefaultTenantID, email).Scan(ctx, &role); err != nil {
+			t.Fatal(err)
+		}
+		return role
+	}
 
-	if code, role := invite("owner@example.com", ownerID, `{"email":"New@Example.com"}`); code != http.StatusOK || role != "admin" {
+	if code, role := invite(ownerID, `{"email":"New@Example.com"}`); code != http.StatusOK || role != "admin" {
 		t.Fatalf("inviting a new address: %d role %q, want 200 admin", code, role)
+	}
+	if got := tenantRole("new@example.com"); got != "admin" {
+		t.Errorf("new member role %q, want admin", got)
+	}
+	// The invite must not raise the platform role: users.role stays user.
+	var platformRole string
+	if err := s.DB.NewRaw("SELECT role FROM users WHERE email = 'new@example.com'").Scan(ctx, &platformRole); err != nil || platformRole != "user" {
+		t.Errorf("platform role %q (err %v), want user", platformRole, err)
 	}
 	if n := audits(1); n != 1 {
 		t.Errorf("after one invite: %d audit entries, want 1", n)
 	}
-	if code, _ := invite("owner@example.com", ownerID, `{"email":"new@example.com"}`); code != http.StatusOK {
+	if code, _ := invite(ownerID, `{"email":"new@example.com"}`); code != http.StatusOK {
 		t.Errorf("repeating the invite: %d, want 200", code)
 	}
 
@@ -87,7 +113,7 @@ func TestInviteTeamMember(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			codes[i], _ = invite("owner@example.com", ownerID, `{"email":"burst@example.com","role":"owner"}`)
+			codes[i], _ = invite(ownerID, `{"email":"burst@example.com","role":"owner"}`)
 		}()
 	}
 	wg.Wait()
@@ -97,9 +123,8 @@ func TestInviteTeamMember(t *testing.T) {
 			break
 		}
 	}
-	var burstRole string
-	if err := s.DB.NewRaw("SELECT role FROM users WHERE email = 'burst@example.com'").Scan(ctx, &burstRole); err != nil || burstRole != "owner" {
-		t.Errorf("burst@example.com is %q (err %v), want owner", burstRole, err)
+	if got := tenantRole("burst@example.com"); got != "owner" {
+		t.Errorf("burst@example.com is %q, want owner", got)
 	}
 	if n := audits(2); n != 2 {
 		t.Errorf("after a repeat and five concurrent invites of one address: %d audit entries, want 2", n)
@@ -107,7 +132,7 @@ func TestInviteTeamMember(t *testing.T) {
 
 	// The handler's own owner check, made before the lock; the check made
 	// again under the lock is covered by the store tests.
-	if code, _ := invite("helper@example.com", "", `{"email":"sneaky@example.com","role":"owner"}`); code != http.StatusForbidden {
+	if code, _ := invite(helperID, `{"email":"sneaky@example.com","role":"owner"}`); code != http.StatusForbidden {
 		t.Errorf("admin inviting: %d, want 403", code)
 	}
 	var sneaky int
@@ -117,9 +142,10 @@ func TestInviteTeamMember(t *testing.T) {
 }
 
 // Removing a member: removals of one admin that all passed the handler's
-// own check answer the same, and only the one that changed the role writes
-// the audit entry. The test holds the team lock while they start, so every
-// one of them is past that check and waiting on the lock.
+// own check answer the same, and only the one that changed the
+// membership writes the audit entry. The test holds the team lock while
+// they start, so every one of them is past that check and waiting on the
+// lock.
 func TestRemoveTeamMember(t *testing.T) {
 	s := scratchStore(t)
 	ctx := context.Background()
@@ -127,7 +153,11 @@ func TestRemoveTeamMember(t *testing.T) {
 	h := &AdminHandler{Store: s}
 
 	ownerID, adminID := store.NewID(), store.NewID()
-	if _, err := s.DB.ExecContext(ctx, "INSERT INTO users (id, email, name, role) VALUES (?, 'owner@example.com', '', 'owner'), (?, 'helper@example.com', '', 'admin')", ownerID, adminID); err != nil {
+	if _, err := s.DB.ExecContext(ctx, "INSERT INTO users (id, email, name, role) VALUES (?, 'owner@example.com', '', 'user'), (?, 'helper@example.com', '', 'user')", ownerID, adminID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.ExecContext(ctx, "INSERT INTO tenant_members (tenant_id, user_id, role) VALUES (?, ?, 'owner'), (?, ?, 'admin')",
+		model.DefaultTenantID, ownerID, model.DefaultTenantID, adminID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,7 +180,7 @@ func TestRemoveTeamMember(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodDelete, "/admin/team/"+adminID, nil)
 			c.Params = gin.Params{{Key: "id", Value: adminID}}
-			c.Set("email", "owner@example.com")
+			c.Set("auth_type", "session")
 			c.Set("user_id", ownerID)
 			h.RemoveTeamMember(c)
 			codes[i], bodies[i] = w.Code, w.Body.String()
@@ -192,9 +222,14 @@ func TestRemoveTeamMember(t *testing.T) {
 	if n != 1 {
 		t.Errorf("%d member_removed audit entries, want 1", n)
 	}
+	// The global user row is untouched.
+	var users int
+	if err := s.DB.NewRaw("SELECT count(*) FROM users WHERE id = ?", adminID).Scan(ctx, &users); err != nil || users != 1 {
+		t.Errorf("removal deleted the global user (%d, %v)", users, err)
+	}
 }
 
-// Each SetRoleAtomic refusal maps to its own status.
+// Each tenant team refusal maps to its own status.
 func TestTeamRoleError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
@@ -203,6 +238,7 @@ func TestTeamRoleError(t *testing.T) {
 	}{
 		{store.ErrLastOwner, http.StatusBadRequest},
 		{store.ErrNotOwner, http.StatusForbidden},
+		{store.ErrTenantMemberNotFound, http.StatusNotFound},
 		{store.ErrUserNotFound, http.StatusNotFound},
 		{context.Canceled, http.StatusInternalServerError},
 	} {

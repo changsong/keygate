@@ -77,7 +77,7 @@ async function request<T>(path: string, opts?: RequestInit, retried = false): Pr
   // Could not renew: redirect to login
   if (res.status === 401 && !signup) {
     // Don't redirect if already on login page or fetching auth state
-    if (!window.location.pathname.startsWith("/login") && path !== "/portal/me") {
+    if (!window.location.pathname.startsWith("/login") && path !== "/me") {
       window.location.href = "/login"
     }
     throw new Error("Session expired")
@@ -135,8 +135,24 @@ function del<T>(path: string) {
 }
 
 // ─── Site Config (public, no auth) ───
+export interface SiteConfigPayload {
+  site_name?: string
+  brand_color?: string
+  logo_url?: string
+  timezone?: string
+  language?: string
+  // The public origin this workspace answers at; feed URLs and copyable
+  // links are built from it.
+  base_url?: string
+  attribution_text?: string
+  attribution_url?: string
+  // Present on a tenant host (and the default tenant): the workspace
+  // this deployment is serving.
+  tenant?: { slug: string; name: string }
+}
+
 export const site = {
-  config: () => get<Record<string, string>>("/config"),
+  config: () => get<SiteConfigPayload>("/config"),
 }
 
 // ─── Auth ───
@@ -154,10 +170,38 @@ export const setup = {
   }) => post<{ user: unknown; product: unknown; plan: unknown }>("/setup/initialize", body),
 }
 
+export interface TenantRef {
+  id: string
+  slug: string
+  name: string
+}
+
+// MeResponse is the signed-in account as the server describes it at the
+// host the page was opened on: a tenant host reports the account's place
+// in that workspace; the platform console reports no tenant.
+export interface MeResponse {
+  id: string
+  email: string
+  name: string
+  avatar_url: string
+  is_admin: boolean
+  role: string // platform role: "owner" | "admin" | "user"
+  is_platform: boolean
+  is_platform_admin: boolean
+  is_member: boolean
+  is_tenant_admin: boolean
+  tenant_role: string // "owner" | "admin" | "member" | ""
+  tenant?: TenantRef
+}
+
 export const auth = {
-  me: () =>
-    get<{ id: string; email: string; name: string; avatar_url: string; is_admin: boolean; role: string }>("/portal/me"),
-  providers: () => get<{ dev_login: boolean; otp: boolean }>("/auth/providers"),
+  me: () => get<MeResponse>("/me"),
+  providers: () =>
+    get<{
+      dev_login: boolean
+      otp: boolean
+      casdoor?: { enabled: boolean; display_name: string; login_url: string }
+    }>("/auth/providers"),
   logout: () => post<void>("/auth/logout"),
   devLogin: (email: string, name: string) => post<{ status: string }>("/auth/dev-login", { email, name }),
   otpSend: (email: string) => post<{ status: string }>("/auth/otp/send", { email }),
@@ -239,6 +283,13 @@ export const portal = {
   removeActivation: (licenseKey: string, activationId: string) =>
     del<{ status: string }>(
       `/portal/licenses/${encodeURIComponent(licenseKey)}/activations/${encodeURIComponent(activationId)}`,
+    ),
+  // Bind an unowned license (owner key) or the caller's own seat (member
+  // key) to the signed-in account.
+  claimLicense: (data: { license_key: string }) =>
+    post<{ status: "claimed" | "already_owned" | "already_member"; license_id: string }>(
+      "/portal/licenses/claim",
+      data,
     ),
   listSeats: (licenseKey: string) => post<{ seats: Seat[] }>("/portal/seats", { license_key: licenseKey }),
   addSeat: (data: { license_key: string; email: string }) => post<Seat>("/portal/seats/add", data),
@@ -604,6 +655,14 @@ export const admin = {
     return get<{ users: User[]; total: number }>(`/admin/users?${q}`)
   },
 
+  // Bind a licence to an account (only when unowned or already the
+  // same account), or reassign one held elsewhere (admin only). The
+  // licence's billing address is untouched.
+  bindLicenseOwner: (licenseId: string, data: { user_id?: string; email?: string }) =>
+    post<{ status: string; license_id: string; user_id: string }>(`/admin/licenses/${licenseId}/owner`, data),
+  reassignLicenseOwner: (licenseId: string, data: { user_id?: string; email?: string }) =>
+    post<{ status: string; license_id: string; user_id: string }>(`/admin/licenses/${licenseId}/owner/override`, data),
+
   // Team (admin management)
   listTeam: (params?: { limit?: number; offset?: number }) =>
     get<Paged<{ members: User[] }>>(`/admin/team?${listQuery(params)}`),
@@ -869,6 +928,9 @@ export interface License {
 // endpoints. Admin payloads never carry it.
 export interface PortalLicense extends License {
   license_key: string
+  // This identity owns the licence: billing, team management and the
+  // owner's key are theirs alone. Decided by the server (user_id first).
+  is_owner?: boolean
   // The owner can upgrade it to a paid plan now, keeping the key.
   upgradable?: boolean
   // For a member: their seat is paused (over the seat limit).
@@ -1254,3 +1316,65 @@ export const RELEASE_PLATFORMS = [
 ] as const
 
 export const RELEASE_CHANNELS = ["stable", "beta", "alpha", "dev"] as const
+
+// ─── Platform console (PLATFORM_HOST, platform admin) ───
+// Workspaces a platform admin opens and manages. These endpoints answer
+// only on the platform host; a tenant subdomain refuses them.
+export interface PlatformTenant {
+  id: string
+  slug: string
+  name: string
+  status: "active" | "suspended"
+  created_at: string
+  updated_at: string
+  member_count: number
+  license_count: number
+}
+
+export interface PlatformTenantDetail {
+  tenant: PlatformTenant
+  member_count: number
+  license_count: number
+  base_url: string
+}
+
+export interface PlatformMember {
+  id: string
+  email: string
+  name: string
+  avatar_url?: string
+  role: "owner" | "admin" | "member"
+  created_at: string
+}
+
+export type TenantRole = "owner" | "admin" | "member"
+
+// PlatformSpace is a workspace the signed-in account belongs to; the
+// switcher on the platform host links to base_url.
+export interface PlatformSpace {
+  id: string
+  slug: string
+  name: string
+  status: "active" | "suspended"
+  role: TenantRole
+  base_url: string
+}
+
+export const platform = {
+  listTenants: () => get<{ tenants: PlatformTenant[]; total: number }>("/platform/tenants"),
+  createTenant: (data: { slug: string; name: string; owner_email: string }) =>
+    post<{ tenant: PlatformTenant; owner: unknown }>("/platform/tenants", data),
+  getTenant: (id: string) => get<PlatformTenantDetail>(`/platform/tenants/${id}`),
+  updateTenant: (id: string, data: { name?: string; status?: "active" | "suspended" }) =>
+    patch<PlatformTenant>(`/platform/tenants/${id}`, data),
+  listMembers: (id: string) => get<{ members: PlatformMember[]; total: number }>(`/platform/tenants/${id}/members`),
+  addMember: (id: string, data: { email: string; role?: TenantRole }) =>
+    post<PlatformMember>(`/platform/tenants/${id}/members`, data),
+  setMemberRole: (id: string, userId: string, role: TenantRole) =>
+    patch<{ status: string; role: TenantRole }>(`/platform/tenants/${id}/members/${userId}`, { role }),
+  removeMember: (id: string, userId: string) => del<{ status: string }>(`/platform/tenants/${id}/members/${userId}`),
+  getSettings: () => get<{ settings: Record<string, string> }>("/platform/settings"),
+  updateSettings: (settings: Record<string, string>) => put<{ status: string }>("/platform/settings", settings),
+  // The workspaces this account belongs to, for the "my spaces" view.
+  myTenants: () => get<{ tenants: PlatformSpace[]; total: number }>("/me/tenants"),
+}

@@ -86,10 +86,47 @@ type EmailService struct {
 	// baseURL is the install's public address (BASE_URL), used to link
 	// customers to their portal from templates ({{.PortalURL}}).
 	baseURL string
+	// tenantBaseURL maps a workspace to its public origin, so a mail
+	// sent for one tenant links there. Nil in single-tenant installs,
+	// where baseURL is the only origin.
+	tenantBaseURL func(tenantID string) string
 }
 
 // SetBaseURL records the install's public address for portal links.
 func (s *EmailService) SetBaseURL(u string) { s.baseURL = strings.TrimRight(strings.TrimSpace(u), "/") }
+
+// SetTenantBaseURLResolver supplies the per-workspace public origin.
+// A tenant that resolves to "" falls back to baseURL.
+func (s *EmailService) SetTenantBaseURLResolver(fn func(tenantID string) string) {
+	s.tenantBaseURL = fn
+}
+
+// portalBaseFor prefers the tenant's origin and falls back to BASE_URL
+// for the default tenant or a single-tenant install.
+func (s *EmailService) portalBaseFor(tenantID string) string {
+	if tenantID != "" && s.tenantBaseURL != nil {
+		if base := strings.TrimRight(strings.TrimSpace(s.tenantBaseURL(tenantID)), "/"); base != "" {
+			return base
+		}
+	}
+	return s.baseURL
+}
+
+// templateDataForTenant is templateData with the workspace's site name
+// and portal link filled in.
+func (s *EmailService) templateDataForTenant(tenantID string, data map[string]any) map[string]any {
+	if _, ok := data["PortalURL"]; !ok {
+		if base := s.portalBaseFor(tenantID); base != "" {
+			data["PortalURL"] = base + "/portal"
+		}
+	}
+	if _, ok := data["SiteName"]; !ok && tenantID != "" && s.store != nil {
+		if name, err := s.store.GetSettingForTenant(context.Background(), tenantID, "site_name"); err == nil && name != "" {
+			data["SiteName"] = name
+		}
+	}
+	return s.templateData(data)
+}
 
 // templateData adds what every customer template may use: the site's name
 // ({{.SiteName}}) and the customer portal link ({{.PortalURL}}). A value
@@ -667,7 +704,13 @@ func localHostname() string { return "[127.0.0.1]" }
 // RenderLicenseCreated builds the license delivery email. downloadURL is
 // the product's download page ({{.DownloadURL}}); empty leaves it out.
 func (s *EmailService) RenderLicenseCreated(productName, planName, licenseKey, downloadURL string) (subject, body string) {
-	body = s.renderEmail("license_created", tmplLicenseCreated, s.templateData(map[string]any{
+	return s.RenderLicenseCreatedFor("", productName, planName, licenseKey, downloadURL)
+}
+
+// RenderLicenseCreatedFor is RenderLicenseCreated with the workspace's
+// portal link.
+func (s *EmailService) RenderLicenseCreatedFor(tenantID, productName, planName, licenseKey, downloadURL string) (subject, body string) {
+	body = s.renderEmail("license_created", tmplLicenseCreated, s.templateDataForTenant(tenantID, map[string]any{
 		"Product":     productName,
 		"Plan":        planName,
 		"LicenseKey":  licenseKey,
@@ -677,7 +720,13 @@ func (s *EmailService) RenderLicenseCreated(productName, planName, licenseKey, d
 }
 
 func (s *EmailService) SendLicenseCreated(to, productName, planName, licenseKey, downloadURL string) {
-	subject, body := s.RenderLicenseCreated(productName, planName, licenseKey, downloadURL)
+	s.SendLicenseCreatedFor("", to, productName, planName, licenseKey, downloadURL)
+}
+
+// SendLicenseCreatedFor delivers the license email with the workspace's
+// portal link.
+func (s *EmailService) SendLicenseCreatedFor(tenantID, to, productName, planName, licenseKey, downloadURL string) {
+	subject, body := s.RenderLicenseCreatedFor(tenantID, productName, planName, licenseKey, downloadURL)
 	go func() {
 		if err := s.Send(to, subject, body); err != nil {
 			s.logger.Error("email delivery failed", "to", to, "subject", subject, "error", err)
@@ -695,7 +744,13 @@ func (s *EmailService) SendLicenseCreated(to, productName, planName, licenseKey,
 // reminder must not tell a customer they will lose access when they
 // will in fact carry on, on that plan.
 func (s *EmailService) RenderLicenseExpiring(productName, licenseKey, expiresAt string, daysLeft int, trial bool, fallbackPlan string) (subject, body string) {
-	body = s.renderEmail("license_expiring", tmplLicenseExpiring, s.templateData(map[string]any{
+	return s.RenderLicenseExpiringFor("", productName, licenseKey, expiresAt, daysLeft, trial, fallbackPlan)
+}
+
+// RenderLicenseExpiringFor is RenderLicenseExpiring with the workspace's
+// portal link.
+func (s *EmailService) RenderLicenseExpiringFor(tenantID, productName, licenseKey, expiresAt string, daysLeft int, trial bool, fallbackPlan string) (subject, body string) {
+	body = s.renderEmail("license_expiring", tmplLicenseExpiring, s.templateDataForTenant(tenantID, map[string]any{
 		"Product":      productName,
 		"LicenseKey":   licenseKey,
 		"ExpiresAt":    expiresAt,
@@ -720,7 +775,13 @@ func (s *EmailService) RenderLicenseExpiring(productName, licenseKey, expiresAt 
 // with backoff, so queuing is also what makes the reminder survive a
 // crash.
 func (s *EmailService) RenderUpdatesEnding(productName, licenseKey, updatesUntil string) (subject, body string) {
-	body = s.renderEmail("updates_ending", tmplUpdatesEnding, s.templateData(map[string]any{
+	return s.RenderUpdatesEndingFor("", productName, licenseKey, updatesUntil)
+}
+
+// RenderUpdatesEndingFor is RenderUpdatesEnding with the workspace's
+// portal link.
+func (s *EmailService) RenderUpdatesEndingFor(tenantID, productName, licenseKey, updatesUntil string) (subject, body string) {
+	body = s.renderEmail("updates_ending", tmplUpdatesEnding, s.templateDataForTenant(tenantID, map[string]any{
 		"Product":      productName,
 		"LicenseKey":   licenseKey,
 		"UpdatesUntil": updatesUntil,
@@ -904,11 +965,17 @@ func (s *EmailService) SendDunningFinal(to, productName string) {
 // the invite says nothing reliable about the public address, and behind
 // a proxy it read as http://127.0.0.1:9000.
 func (s *EmailService) RenderAdminInvite(siteName, inviterName, role string) (subject, body string) {
+	return s.RenderAdminInviteFor("", siteName, inviterName, role)
+}
+
+// RenderAdminInviteFor is RenderAdminInvite with the workspace's login
+// link.
+func (s *EmailService) RenderAdminInviteFor(tenantID, siteName, inviterName, role string) (subject, body string) {
 	return "You've been added to " + siteName, s.renderEmail("admin_invite", tmplAdminInvite, map[string]string{
 		"SiteName": siteName,
 		"Inviter":  inviterName,
 		"Role":     role,
-		"LoginURL": s.baseURL + "/login",
+		"LoginURL": s.portalBaseFor(tenantID) + "/login",
 	})
 }
 
@@ -922,7 +989,13 @@ func (s *EmailService) RenderAdminInvite(siteName, inviterName, role string) (su
 // grant on the InviteTeamMember handler. The recipient can still
 // learn out-of-band that they're admin.
 func (s *EmailService) SendAdminInvite(to, siteName, inviterName, role string) {
-	subj, body := s.RenderAdminInvite(siteName, inviterName, role)
+	s.SendAdminInviteFor("", to, siteName, inviterName, role)
+}
+
+// SendAdminInviteFor is SendAdminInvite with the workspace's login
+// link.
+func (s *EmailService) SendAdminInviteFor(tenantID, to, siteName, inviterName, role string) {
+	subj, body := s.RenderAdminInviteFor(tenantID, siteName, inviterName, role)
 	go func() {
 		if err := s.Send(to, subj, body); err != nil {
 			s.logger.Error("email delivery failed", "to", to, "subject", subj, "error", err)

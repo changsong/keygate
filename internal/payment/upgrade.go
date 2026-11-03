@@ -20,6 +20,7 @@ import (
 	"github.com/stripe/stripe-go/v82/subscription"
 	"github.com/uptrace/bun"
 
+	"github.com/tabloy/keygate/internal/middleware"
 	"github.com/tabloy/keygate/internal/model"
 	"github.com/tabloy/keygate/internal/store"
 	"github.com/tabloy/keygate/pkg/response"
@@ -101,11 +102,11 @@ func upgradeTarget(lic *model.License, plan *model.Plan) bool {
 		plan.InitialUpdatesUntil(time.Now()) == nil
 }
 
-// UpgradableLicenses reports which of the licences email owns can be
+// UpgradableLicenses reports which of the licences id owns can be
 // upgraded right now: Stripe is configured, the licence qualifies, and
 // its product has a plan to upgrade to. The portal shows the Upgrade
 // button from this; StartUpgrade checks again regardless.
-func (h *StripeHandler) UpgradableLicenses(ctx context.Context, email string, ls []*model.License) (map[string]bool, error) {
+func (h *StripeHandler) UpgradableLicenses(ctx context.Context, id model.Identity, ls []*model.License) (map[string]bool, error) {
 	out := map[string]bool{}
 	if stripe.Key == "" {
 		return out, nil
@@ -114,7 +115,7 @@ func (h *StripeHandler) UpgradableLicenses(ctx context.Context, email string, ls
 	seen := map[string]bool{}
 	var products []string
 	for _, l := range ls {
-		if !strings.EqualFold(l.Email, email) || !upgradeable(l, l.Plan) {
+		if !l.OwnedBy(id) || !upgradeable(l, l.Plan) {
 			continue
 		}
 		candidates = append(candidates, l)
@@ -161,10 +162,13 @@ func (h *StripeHandler) StartUpgrade(c *gin.Context) {
 		response.NotFound(c, "license not found")
 		return
 	}
+	if !licenseInTenant(c, lic) {
+		response.NotFound(c, "license not found")
+		return
+	}
 	// Only the owner buys for a licence, as with renewals and plan
 	// changes; seat holders use it but do not pay for it.
-	emailVal, _ := c.Get("email")
-	if e, ok := emailVal.(string); !ok || !strings.EqualFold(lic.Email, e) {
+	if !lic.OwnedBy(middleware.IdentityFrom(c)) {
 		response.Forbidden(c, "not your license")
 		return
 	}
@@ -275,8 +279,8 @@ func (h *StripeHandler) StartUpgrade(c *gin.Context) {
 		params := &stripe.CheckoutSessionParams{
 			Mode:                stripe.String(string(mode)),
 			LineItems:           []*stripe.CheckoutSessionLineItemParams{item},
-			SuccessURL:          stripe.String(h.BaseURL + "/checkout/success?session_id={CHECKOUT_SESSION_ID}"),
-			CancelURL:           stripe.String(h.BaseURL + "/portal"),
+			SuccessURL:          stripe.String(tenantBaseURL(c, h.BaseURL) + "/checkout/success?session_id={CHECKOUT_SESSION_ID}"),
+			CancelURL:           stripe.String(tenantBaseURL(c, h.BaseURL) + "/portal"),
 			AllowPromotionCodes: stripe.Bool(true),
 		}
 		if plan.PerSeat || plan.MaxSeats > 0 {
@@ -297,6 +301,7 @@ func (h *StripeHandler) StartUpgrade(c *gin.Context) {
 			metaPlanID:      plan.ID,
 			"product_id":    plan.ProductID,
 			metaLicenseType: plan.LicenseType,
+			metaTenant:      lic.TenantID,
 		}
 		// The payment (one-time) or the subscription names the upgrade
 		// too: a refund arrives with nothing else to find it by.
@@ -311,7 +316,7 @@ func (h *StripeHandler) StartUpgrade(c *gin.Context) {
 			return fmt.Errorf("create checkout session: %w", err)
 		}
 		if err := store.CreateLicenseUpgradeIn(ctx, tx, &model.LicenseUpgrade{
-			ID: upgradeID, LicenseID: lic.ID, ToPlanID: plan.ID, StripeCheckoutSessionID: sess.ID,
+			TenantID: lic.TenantID, ID: upgradeID, LicenseID: lic.ID, ToPlanID: plan.ID, StripeCheckoutSessionID: sess.ID,
 		}); err != nil {
 			// Not recorded: close the checkout rather than leave one open
 			// that nothing would replace. Fulfilment copes with a session
@@ -480,7 +485,7 @@ func (h *StripeHandler) fulfillUpgrade(ctx context.Context, customerID, subscrip
 		if errors.Is(err, sql.ErrNoRows) {
 			// A checkout whose row was never written (StartUpgrade
 			// failed after creating it) and was paid regardless.
-			u = &model.LicenseUpgrade{ID: metadata[metaUpgradeID], LicenseID: licenseID, ToPlanID: planID, StripeCheckoutSessionID: sessionID}
+			u = &model.LicenseUpgrade{TenantID: locked.TenantID, ID: metadata[metaUpgradeID], LicenseID: licenseID, ToPlanID: planID, StripeCheckoutSessionID: sessionID}
 			if err := store.CreateLicenseUpgradeIn(ctx, tx, u); err != nil {
 				return err
 			}

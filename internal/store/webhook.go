@@ -22,9 +22,22 @@ func (s *Store) FindWebhookByID(ctx context.Context, id string) (*model.Webhook,
 	return w, s.DB.NewSelect().Model(w).Relation("Product").Where("webhook.id = ?", id).Scan(ctx)
 }
 
-func (s *Store) ListWebhooks(ctx context.Context, productID, search string, p Page) ([]*model.Webhook, int, error) {
+// FindWebhookForTenant reads a webhook only if it belongs to tenantID.
+func (s *Store) FindWebhookForTenant(ctx context.Context, tenantID, id string) (*model.Webhook, error) {
+	w := new(model.Webhook)
+	q := s.DB.NewSelect().Model(w).Relation("Product").Where("webhook.id = ?", id)
+	if tenantID != "" {
+		q = q.Where("webhook.tenant_id = ?", tenantID)
+	}
+	return w, q.Scan(ctx)
+}
+
+func (s *Store) ListWebhooks(ctx context.Context, tenantID, productID, search string, p Page) ([]*model.Webhook, int, error) {
 	var out []*model.Webhook
 	q := s.DB.NewSelect().Model(&out).Relation("Product").OrderExpr("webhook.created_at DESC, webhook.id DESC")
+	if tenantID != "" {
+		q = q.Where("webhook.tenant_id = ?", tenantID)
+	}
 	if productID != "" {
 		q = q.Where("webhook.product_id = ?", productID)
 	}

@@ -66,7 +66,7 @@ func TestFulfillCheckout_OneLicensePerSession(t *testing.T) {
 	fulfilOK(h, ctx, email, "", "", "", meta("cs_test_ful_"+suffix+"_1"), "test") // replay
 	fulfilOK(h, ctx, email, "", "", "", meta("cs_test_ful_"+suffix+"_2"), "test")
 
-	lics, err := s.ListLicensesByEmail(ctx, email)
+	lics, err := s.ListLicensesByEmail(ctx, "", email)
 	if err != nil {
 		t.Fatalf("list licenses: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestFulfillCheckout_ResolvesPlanFromLineItems(t *testing.T) {
 	if atomic.LoadInt32(&hits) != 1 {
 		t.Fatalf("expected one line_items lookup, got %d", hits)
 	}
-	lics, err := s.ListLicensesByEmail(ctx, email)
+	lics, err := s.ListLicensesByEmail(ctx, "", email)
 	if err != nil {
 		t.Fatalf("list licenses: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestCheckoutCompleted_WaitsForAsyncPayment(t *testing.T) {
 	}
 
 	h.onCheckoutCompleted(ctx, payload("unpaid"))
-	if lics, _ := s.ListLicensesByEmail(ctx, email); len(lics) != 0 {
+	if lics, _ := s.ListLicensesByEmail(ctx, "", email); len(lics) != 0 {
 		t.Fatalf("unpaid session produced %d license(s)", len(lics))
 	}
 	if s.IsEventProcessed(ctx, sessionClaimProvider, sessionID) {
@@ -292,7 +292,7 @@ func TestCheckoutCompleted_WaitsForAsyncPayment(t *testing.T) {
 	}
 
 	h.onCheckoutCompleted(ctx, payload("paid"))
-	lics, err := s.ListLicensesByEmail(ctx, email)
+	lics, err := s.ListLicensesByEmail(ctx, "", email)
 	if err != nil {
 		t.Fatalf("list licenses: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestSyncPendingCheckouts(t *testing.T) {
 	h.SyncPendingCheckouts(ctx)
 	h.SyncPendingCheckouts(ctx) // second pass must not fulfil twice
 
-	lics, _ := s.ListLicensesByEmail(ctx, email)
+	lics, _ := s.ListLicensesByEmail(ctx, "", email)
 	if len(lics) != 1 || lics[0].StripePaymentIntentID != "pi_pend_"+suffix {
 		t.Fatalf("expected exactly one license from the settled session, got %+v", lics)
 	}
@@ -563,7 +563,7 @@ func TestFulfillCheckout_ReleasesClaimWhenLicenseWriteFails(t *testing.T) {
 	if s.IsEventProcessed(ctx, sessionClaimProvider, sessionID) {
 		t.Fatalf("session still claimed after a failed license write")
 	}
-	if lics, _ := s.ListLicensesByEmail(ctx, email); len(lics) != 0 {
+	if lics, _ := s.ListLicensesByEmail(ctx, "", email); len(lics) != 0 {
 		t.Fatalf("unexpected license after failed write: %+v", lics)
 	}
 
@@ -571,7 +571,7 @@ func TestFulfillCheckout_ReleasesClaimWhenLicenseWriteFails(t *testing.T) {
 	if !fulfilOK(h, ctx, email, "", "sub_free_"+suffix, "", meta, "test") {
 		t.Fatalf("retry did not fulfil")
 	}
-	if lics, _ := s.ListLicensesByEmail(ctx, email); len(lics) != 1 {
+	if lics, _ := s.ListLicensesByEmail(ctx, "", email); len(lics) != 1 {
 		t.Fatalf("expected one license after retry, got %d", len(lics))
 	}
 	if !s.IsEventProcessed(ctx, fulfilledSessionProvider, sessionID) || s.IsEventProcessed(ctx, sessionClaimProvider, sessionID) {
@@ -676,7 +676,7 @@ func TestFulfillCheckout_InFlightClaimIsNotFulfilment(t *testing.T) {
 	if fulfilOK(h, ctx, email, "", "", "", meta, "test") {
 		t.Fatalf("in-flight claim reported as fulfilled")
 	}
-	if lics, _ := s.ListLicensesByEmail(ctx, email); len(lics) != 0 {
+	if lics, _ := s.ListLicensesByEmail(ctx, "", email); len(lics) != 0 {
 		t.Fatalf("license created despite foreign claim: %+v", lics)
 	}
 
@@ -689,7 +689,7 @@ func TestFulfillCheckout_InFlightClaimIsNotFulfilment(t *testing.T) {
 	if !fulfilOK(h, ctx, email, "", "", "", meta, "test") {
 		t.Fatalf("stale claim was not taken over")
 	}
-	lics, _ := s.ListLicensesByEmail(ctx, email)
+	lics, _ := s.ListLicensesByEmail(ctx, "", email)
 	if len(lics) != 1 || lics[0].StripeCheckoutSessionID != sessionID {
 		t.Fatalf("expected one license carrying the session id, got %+v", lics)
 	}
@@ -697,7 +697,7 @@ func TestFulfillCheckout_InFlightClaimIsNotFulfilment(t *testing.T) {
 	if !fulfilOK(h, ctx, email, "", "", "", meta, "test") {
 		t.Fatalf("replay after fulfilment must report fulfilled")
 	}
-	if lics, _ := s.ListLicensesByEmail(ctx, email); len(lics) != 1 {
+	if lics, _ := s.ListLicensesByEmail(ctx, "", email); len(lics) != 1 {
 		t.Fatalf("replay duplicated the license")
 	}
 }
@@ -798,7 +798,7 @@ func TestSyncPendingCheckouts_TakesOverStaleClaim(t *testing.T) {
 	})
 	h := &StripeHandler{Store: s}
 	h.SyncPendingCheckouts(ctx)
-	lics, _ := s.ListLicensesByEmail(ctx, email)
+	lics, _ := s.ListLicensesByEmail(ctx, "", email)
 	if len(lics) != 1 || lics[0].StripeCheckoutSessionID != sessionID {
 		t.Fatalf("stale claim not taken over by the pending sync: %+v", lics)
 	}
@@ -935,7 +935,7 @@ func TestFulfillCheckout_LegacyDoneMarker(t *testing.T) {
 	if !ok || err != nil {
 		t.Fatalf("legacy done session: ok=%v err=%v", ok, err)
 	}
-	if lics, _ := s.ListLicensesByEmail(ctx, email); len(lics) != 0 {
+	if lics, _ := s.ListLicensesByEmail(ctx, "", email); len(lics) != 0 {
 		t.Fatalf("legacy done session produced a new license: %+v", lics)
 	}
 }
@@ -1056,7 +1056,7 @@ func TestWebhook_TransientLineItemsFailureStaysRetryable(t *testing.T) {
 	// Stripe's retries have run out; the pending sync gets it later.
 	healthy.Store(true)
 	h.SyncPendingCheckouts(ctx)
-	lics, _ := s.ListLicensesByEmail(ctx, email)
+	lics, _ := s.ListLicensesByEmail(ctx, "", email)
 	if len(lics) != 1 || lics[0].PlanID != plan.ID {
 		t.Fatalf("pending sync did not fulfil after recovery: %+v", lics)
 	}
@@ -1197,7 +1197,7 @@ func TestCheckoutCompleted_UnfulfilledIsScheduled(t *testing.T) {
 	if !s.IsEventProcessed(ctx, pendingSessionProvider, sessionID) {
 		t.Fatalf("unfulfilled paid session was not scheduled for retry")
 	}
-	if lics, _ := s.ListLicensesByEmail(ctx, "u-"+plan.Slug+"@example.com"); len(lics) != 0 {
+	if lics, _ := s.ListLicensesByEmail(ctx, "", "u-"+plan.Slug+"@example.com"); len(lics) != 0 {
 		t.Fatalf("license created despite foreign claim")
 	}
 }

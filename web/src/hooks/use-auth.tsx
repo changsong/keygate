@@ -1,13 +1,9 @@
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react"
-import { auth, ServiceUnavailableError } from "@/lib/api"
+import { auth, type MeResponse, ServiceUnavailableError, type TenantRef } from "@/lib/api"
 
-interface AuthUser {
-  id: string
-  email: string
-  name: string
-  avatar_url: string
-  is_admin: boolean
-  role: string // "owner" | "admin" | "user"
+interface AuthUser extends MeResponse {
+  // The workspace the page was opened in; absent on the platform console.
+  tenant?: TenantRef
 }
 
 interface AuthContextType {

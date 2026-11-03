@@ -55,7 +55,7 @@ func TestTopUsersCountsUsageOncePerLicense(t *testing.T) {
 	licence(two, 10, 2)
 	licence(two, 5, 0)
 
-	top, err := s.GetTopUsers(ctx, prod.ID, 10)
+	top, err := s.GetTopUsers(ctx, "", prod.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestTopUsersOneRowPerCustomer(t *testing.T) {
 		}
 	}
 
-	top, err := s.GetTopUsers(ctx, prod.ID, 10)
+	top, err := s.GetTopUsers(ctx, "", prod.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

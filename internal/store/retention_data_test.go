@@ -57,7 +57,7 @@ func TestRetentionDataAddsUpProducts(t *testing.T) {
 		{"product A", a.ID, 10, 2, 20, 80},
 		{"product B", b.ID, 4, 4, 100, 0},
 	} {
-		rows, err := s.GetRetentionData(ctx, tc.productID, 6)
+		rows, err := s.GetRetentionData(ctx, "", tc.productID, 6)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}

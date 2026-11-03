@@ -15,6 +15,7 @@ import {
   Search,
   Trash2,
   Unlink,
+  UserPlus,
 } from "lucide-react"
 import { useRef, useState } from "react"
 import { Link } from "react-router-dom"
@@ -499,6 +500,7 @@ function LicenseDetail({ id, onClose }: { id: string; onClose: () => void }) {
   })
   const [copied, setCopied] = useState(false)
   const [changingPlan, setChangingPlan] = useState(false)
+  const [bindingOwner, setBindingOwner] = useState(false)
   // null = not editing; "" = editing with empty value (perpetual)
   const [editingValidUntil, setEditingValidUntil] = useState<string | null>(null)
 
@@ -717,6 +719,23 @@ function LicenseDetail({ id, onClose }: { id: string; onClose: () => void }) {
                     <p className="mt-1 font-medium">{lic.plan?.name || "-"}</p>
                   </div>
                   {lic.plan?.per_seat && <QuantityField license={lic} />}
+                  <div>
+                    <p className="text-muted-foreground">{t("licenses.ownerAccount")}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <p className={lic.user_id ? "break-all font-mono text-xs" : "text-muted-foreground"}>
+                        {lic.user_id ?? t("licenses.ownerUnbound")}
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => setBindingOwner(true)}
+                      >
+                        <UserPlus className="mr-1 h-3 w-3" />
+                        {t(lic.user_id ? "licenses.changeOwner" : "licenses.bindOwner")}
+                      </Button>
+                    </div>
+                  </div>
                   <div>
                     <p className="text-muted-foreground">{t("licenses.validFrom")}</p>
                     <p className="mt-1">{formatDate(lic.valid_from)}</p>
@@ -1149,6 +1168,14 @@ function LicenseDetail({ id, onClose }: { id: string; onClose: () => void }) {
             currentPlanId={lic.plan_id}
             currentPlan={lic.plan}
             onClose={() => setChangingPlan(false)}
+          />
+        )}
+        {bindingOwner && lic && (
+          <BindOwnerDialog
+            licenseId={id}
+            billingEmail={lic.email}
+            reassign={!!lic.user_id}
+            onClose={() => setBindingOwner(false)}
           />
         )}
         <AlertDialog open={confirmUnlink} onOpenChange={() => setConfirmUnlink(false)}>
@@ -1717,6 +1744,81 @@ function ChangePlanDialog({
             </Button>
             <Button type="submit" disabled={changeMut.isPending || planId === currentPlanId}>
               {changeMut.isPending ? t("common.loading") : t("licenses.changePlan")}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// BindOwnerDialog attaches the licence to the Keygate account that
+// should see it in the portal. Binding changes only the account, never
+// the billing address. A licence already held by an account is
+// reassigned through the override action, which the server allows only
+// to administrators.
+function BindOwnerDialog({
+  licenseId,
+  billingEmail,
+  reassign,
+  onClose,
+}: {
+  licenseId: string
+  billingEmail: string
+  reassign: boolean
+  onClose: () => void
+}) {
+  const { t } = useI18n()
+  const qc = useQueryClient()
+  // The account is named by its full address rather than picked from a
+  // directory: a tenant admin must not be able to browse every account
+  // the platform holds. The server resolves exactly one match.
+  const [email, setEmail] = useState("")
+  const bindMut = useMutation({
+    mutationFn: () =>
+      reassign ? admin.reassignLicenseOwner(licenseId, { email }) : admin.bindLicenseOwner(licenseId, { email }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "license", licenseId] })
+      qc.invalidateQueries({ queryKey: ["admin", "licenses"] })
+      showToast(t(reassign ? "licenses.ownerReassigned" : "licenses.ownerBound"), "success")
+      onClose()
+    },
+    onError: (e: Error) =>
+      showToast(errorCode(e) === "LICENSE_ALREADY_CLAIMED" ? t("licenses.ownerFailed") : e.message, "error"),
+  })
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("licenses.ownerBindTitle")}</DialogTitle>
+          <DialogDescription>
+            {t(reassign ? "licenses.ownerReassignDesc" : "licenses.ownerBindDesc", { email: billingEmail })}
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (email.trim()) bindMut.mutate()
+          }}
+          className="flex min-h-0 flex-1 flex-col gap-4"
+        >
+          <DialogBody className="space-y-2">
+            <Label>{t("licenses.ownerAccount")}</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="account@example.com"
+              required
+            />
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={!email.trim() || bindMut.isPending}>
+              {bindMut.isPending ? t("common.loading") : t(reassign ? "licenses.changeOwner" : "licenses.bindOwner")}
             </Button>
           </DialogFooter>
         </form>

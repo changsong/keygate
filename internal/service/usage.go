@@ -82,7 +82,7 @@ func (s *UsageService) RecordUsage(ctx context.Context, in RecordUsageInput) (*R
 
 	// Atomically check limit and increment in a single transaction to prevent race conditions.
 	// This ensures two concurrent requests cannot both pass the limit check.
-	updated, accepted, err := s.store.IncrementUsageCounterWithLimit(ctx, lic.ID, in.Feature, period, periodKey, in.Quantity, limit)
+	updated, accepted, err := s.store.IncrementUsageCounterWithLimit(ctx, lic.TenantID, lic.ID, in.Feature, period, periodKey, in.Quantity, limit)
 	if errors.Is(err, store.ErrUsageQuantityTooLarge) {
 		return nil, apperr.New(400, "INVALID_INPUT", "quantity too large")
 	}
@@ -104,6 +104,7 @@ func (s *UsageService) RecordUsage(ctx context.Context, in RecordUsageInput) (*R
 	}
 
 	event := &model.UsageEvent{
+		TenantID:  lic.TenantID,
 		LicenseID: lic.ID,
 		Feature:   in.Feature,
 		Quantity:  in.Quantity,
@@ -124,7 +125,7 @@ func (s *UsageService) RecordUsage(ctx context.Context, in RecordUsageInput) (*R
 	// accounting (we'd rather over-grant than under-bill on a
 	// transient blip; the next RecordUsage isn't affected).
 	if quota.StripeMeterEventName != "" {
-		if err := s.store.InsertMeteredEvent(ctx, lic.ID, in.Feature, periodKey, in.Quantity); err != nil {
+		if err := s.store.InsertMeteredEvent(ctx, lic.TenantID, lic.ID, in.Feature, periodKey, in.Quantity); err != nil {
 			s.logger.Error("metered enqueue failed", "license_id", lic.ID, "feature", in.Feature, "error", err)
 		}
 	}

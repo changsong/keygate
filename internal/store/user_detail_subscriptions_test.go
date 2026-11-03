@@ -22,7 +22,7 @@ func TestUserDetailListsSubscriptions(t *testing.T) {
 	}
 	other := newLicenseOn(t, s, ctx, "subscription", model.StatusActive, nil)
 
-	detail, err := s.GetUserDetail(ctx, user.ID)
+	detail, err := s.GetUserDetail(ctx, "", user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -802,6 +802,7 @@ func TestCheckoutByPlan_BoundedPlanNeedsTheSwitch(t *testing.T) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodGet, "/pay/"+checkoutID, nil)
 		c.Params = gin.Params{{Key: "checkout_id", Value: checkoutID}}
+		c.Set("user_id", "test-buyer")
 		h.CheckoutByPlan(c)
 		return w.Code, w.Body.String()
 	}

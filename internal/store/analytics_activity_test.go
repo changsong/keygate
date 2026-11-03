@@ -38,7 +38,7 @@ func TestGetRecentActivityScopesToProduct(t *testing.T) {
 	}
 	seen := func(productID string) map[string]bool {
 		t.Helper()
-		acts, err := s.GetRecentActivity(ctx, productID, 50)
+		acts, err := s.GetRecentActivity(ctx, "", productID, 50)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -46,6 +46,7 @@ export default function PortalLicensesPage() {
   })
 
   const licenses = data?.licenses || []
+  const [showClaim, setShowClaim] = useState(false)
   // Renewals can be switched off server-side (during a rollout, or
   // when the merchant stops selling them); don't offer what the
   // endpoint would refuse. Only an explicit true counts: a replica on
@@ -64,9 +65,15 @@ export default function PortalLicensesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">{t("portal.myLicenses")}</h1>
-        <p className="text-muted-foreground">{t("portal.myLicensesDesc")}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">{t("portal.myLicenses")}</h1>
+          <p className="text-muted-foreground">{t("portal.myLicensesDesc")}</p>
+        </div>
+        <Button variant="outline" onClick={() => setShowClaim(true)}>
+          <Key className="h-4 w-4 mr-2" />
+          {t("portal.claimLicense")}
+        </Button>
       </div>
 
       {licenses.length === 0 ? (
@@ -75,6 +82,9 @@ export default function PortalLicensesPage() {
             <Key className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <p className="text-lg font-medium">{t("portal.noLicenses")}</p>
             <p className="text-muted-foreground mt-1">{t("portal.noLicensesDesc")}</p>
+            <Button variant="outline" className="mt-4" onClick={() => setShowClaim(true)}>
+              {t("portal.claimLicense")}
+            </Button>
           </CardContent>
         </Card>
       ) : (
@@ -84,7 +94,86 @@ export default function PortalLicensesPage() {
           ))}
         </div>
       )}
+
+      {showClaim && <ClaimLicenseDialog onClose={() => setShowClaim(false)} />}
     </div>
+  )
+}
+
+// ClaimLicenseDialog binds an unowned license (owner key) or the caller's
+// own seat (member key) to the signed-in account.
+function ClaimLicenseDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n()
+  const qc = useQueryClient()
+  const [key, setKey] = useState("")
+
+  const claimMut = useMutation({
+    mutationFn: () => portal.claimLicense({ license_key: key.trim() }),
+    onSuccess: (res) => {
+      showToast(
+        res.status === "already_owned"
+          ? t("portal.claimAlreadyOwned")
+          : res.status === "already_member"
+            ? t("portal.claimAlreadyMember")
+            : t("portal.claimSuccess"),
+        "success",
+      )
+      qc.invalidateQueries({ queryKey: ["portal", "licenses"] })
+      onClose()
+    },
+    meta: { ownErrors: true },
+    onError: (e: Error) => {
+      const code = errorCode(e)
+      showToast(
+        code === "LICENSE_ALREADY_CLAIMED"
+          ? t("portal.claimAlreadyClaimed")
+          : code === "LICENSE_NOT_FOUND"
+            ? t("portal.claimNotFound")
+            : t("portal.claimFailed"),
+        "error",
+      )
+    },
+  })
+
+  const trimmed = key.trim()
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("portal.claimTitle")}</DialogTitle>
+          <DialogDescription>{t("portal.claimDesc")}</DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (trimmed && !claimMut.isPending) claimMut.mutate()
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="claim-key">{t("portal.claimKey")}</Label>
+              <Input
+                id="claim-key"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                autoFocus
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={onClose}>
+                {t("common.cancel")}
+              </Button>
+              <Button type="submit" disabled={!trimmed || claimMut.isPending}>
+                {t("portal.claimAction")}
+              </Button>
+            </div>
+          </form>
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -97,11 +186,10 @@ function changedElsewhere(e: Error) {
 
 function LicenseCard({ license: lic, renewalsEnabled }: { license: PortalLicense; renewalsEnabled: boolean }) {
   const { t } = useI18n()
-  const { user } = useAuth()
   // Seat members see the license too, but renewals, plan changes,
   // cancellation and payment methods belong to the license holder;
-  // the server authorises those by the license's own address.
-  const isOwner = !!user?.email && user.email.toLowerCase() === lic.email.toLowerCase()
+  // the server decides ownership (user_id first, email for unbound rows).
+  const isOwner = lic.is_owner === true
   const [copied, setCopied] = useState(false)
   const [showInvoices, setShowInvoices] = useState(false)
   const [showChangePlan, setShowChangePlan] = useState(false)
@@ -407,7 +495,7 @@ function ActivationsSection({ license }: { license: PortalLicense }) {
   // devices". A member sees, and removes, the devices their own key
   // activated; the owner sees everyone's, and whose each is.
   const myEmail = user?.email?.toLowerCase() ?? ""
-  const isOwner = !!myEmail && license.email?.toLowerCase() === myEmail
+  const isOwner = license.is_owner === true
   // An accepted seat at the viewer's address, should one made before
   // addresses were lower-cased leave a pending one beside it.
   const isAcceptedSeat = (license.seats || []).some(
@@ -645,7 +733,6 @@ function useResends() {
 
 function SeatsSection({ license, onAddSeats }: { license: PortalLicense; onAddSeats?: () => void }) {
   const { t } = useI18n()
-  const { user } = useAuth()
   const qc = useQueryClient()
   const [showInvite, setShowInvite] = useState(false)
   // The seat asked about stays set while the dialog closes, so its text
@@ -735,11 +822,10 @@ function SeatsSection({ license, onAddSeats }: { license: PortalLicense; onAddSe
   const atLimit = maxSeats > 0 && activeCount >= maxSeats
 
   // canManage mirrors backend portalSeatMutationGuard: only the license
-  // owner (matched by email, case-insensitive) manages the team.
+  // owner manages the team.
   // Members only see the roster; hiding the buttons prevents the
   // "click → mystery 404 → generic toast" UX failure mode.
-  const myEmail = user?.email?.toLowerCase() ?? ""
-  const canManage = !!myEmail && license.email?.toLowerCase() === myEmail
+  const canManage = license.is_owner === true
   // Invites need a license in use, by the rule the server holds them to
   // (LicenseUsable): an active one up to its end plus the plan's grace
   // days, a canceled one up to its end. The team is still listed, and

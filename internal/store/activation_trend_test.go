@@ -66,7 +66,7 @@ func TestActivationTrendBucketsByUTCDay(t *testing.T) {
 			s.Close()
 			t.Fatalf("session time zone %q (%v), want %q", got, err, zone)
 		}
-		trend, err := s.GetActivationTrend(ctx, prod.ID, day, day.Add(24*time.Hour-time.Microsecond))
+		trend, err := s.GetActivationTrend(ctx, "", prod.ID, day, day.Add(24*time.Hour-time.Microsecond))
 		s.Close()
 		if err != nil {
 			t.Fatal(err)

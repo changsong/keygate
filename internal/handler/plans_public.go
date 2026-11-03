@@ -96,7 +96,7 @@ func (h *PublicPlansHandler) ListPlans(c *gin.Context) {
 		return
 	}
 
-	prod, err := h.Store.FindProductBySlug(c, slug)
+	prod, err := h.Store.FindProductBySlugForTenant(c, tenantID(c), slug)
 	if err != nil {
 		// "No such product" and "lookup blew up" answer the same, so
 		// slug guesses learn nothing from the difference. The operator
@@ -109,7 +109,7 @@ func (h *PublicPlansHandler) ListPlans(c *gin.Context) {
 		return
 	}
 
-	plans, _, err := h.Store.ListPlans(c, prod.ID, "", store.All)
+	plans, _, err := h.Store.ListPlans(c, tenantID(c), prod.ID, "", store.All)
 	if err != nil {
 		response.Internal(c, err)
 		return

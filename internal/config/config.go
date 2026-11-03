@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+
+	"github.com/tabloy/keygate/internal/model"
 )
 
 type Config struct {
@@ -112,6 +114,46 @@ type Config struct {
 	// reasonable default that doesn't OOM modest VMs. Larger artifacts
 	// must use unsigned mode (Phase 3 will add streaming via tempfile).
 	MaxReleaseSignSize int64
+
+	// ─── Casdoor (optional OIDC identity provider) ───
+	// The whole block is optional. When the issuer, client ID, client
+	// secret and redirect URL are all set, the login page offers
+	// Casdoor alongside email OTP; when they are all empty the feature
+	// is off. A partial block is fatal (see ValidateSecurityDefaults):
+	// a half-wired identity provider would fail on the first login.
+	CasdoorIssuerURL    string
+	CasdoorClientID     string
+	CasdoorClientSecret string
+	CasdoorRedirectURL  string
+	// CasdoorWebhookSecret authenticates Casdoor's event deliveries.
+	// Casdoor does not sign webhooks, so this is a shared secret the
+	// operator configures on both sides (X-Keygate-Webhook-Secret).
+	CasdoorWebhookSecret string
+	// CasdoorOrg is the organization the reconciliation pass reads.
+	CasdoorOrg string
+	// CasdoorDisplayName is the button label on the login page.
+	CasdoorDisplayName string
+	// CasdoorDesktopClientIDs are additional OIDC audiences a desktop
+	// client may present at the token-exchange endpoint.
+	CasdoorDesktopClientIDs []string
+
+	// ─── Multi-tenancy ───
+	// Off by default: every request belongs to the default tenant and
+	// behaviour is exactly the single-tenant install. Turning it on
+	// resolves the tenant from the host (<slug>.<TenantRootDomain>) and
+	// puts the platform console on PlatformHost.
+	TenantEnabled    bool
+	TenantRootDomain string // e.g. keygate.app, no scheme
+	PlatformHost     string // e.g. app.keygate.app
+	// SessionCookieDomain is what the session cookie is scoped to.
+	// Production sets .keygate.app so a session issued on the platform
+	// callback is visible on every tenant subdomain. Empty is host-only.
+	SessionCookieDomain string
+	// TenantDevOverride accepts X-Tenant / ?tenant= outside production.
+	// It is refused in production: letting a header choose the tenant
+	// would defeat host-based isolation.
+	TenantDevOverride bool
+	DefaultTenantSlug string
 }
 
 func Load() (*Config, error) {
@@ -178,6 +220,38 @@ func Load() (*Config, error) {
 	cfg.ReleaseKeyEncryptionKey = os.Getenv("RELEASE_KEY_ENCRYPTION_KEY")
 	cfg.MaxReleaseSignSize = int64(envIntOr("MAX_RELEASE_SIGN_SIZE_MB", 500)) * 1024 * 1024
 
+	cfg.CasdoorIssuerURL = strings.TrimRight(strings.TrimSpace(os.Getenv("CASDOOR_ISSUER_URL")), "/")
+	cfg.CasdoorClientID = strings.TrimSpace(os.Getenv("CASDOOR_CLIENT_ID"))
+	cfg.CasdoorClientSecret = os.Getenv("CASDOOR_CLIENT_SECRET")
+	cfg.CasdoorRedirectURL = strings.TrimSpace(os.Getenv("CASDOOR_REDIRECT_URL"))
+	// Default the callback to this server's own origin. Casdoor must be
+	// configured with exactly the same value (it is part of the token
+	// exchange), so operators who front Keygate differently set it
+	// explicitly.
+	if cfg.CasdoorRedirectURL == "" && cfg.CasdoorIssuerURL != "" {
+		cfg.CasdoorRedirectURL = strings.TrimRight(cfg.BaseURL, "/") + "/api/v1/auth/casdoor/callback"
+	}
+	cfg.CasdoorWebhookSecret = os.Getenv("CASDOOR_WEBHOOK_SECRET")
+	cfg.CasdoorOrg = strings.TrimSpace(os.Getenv("CASDOOR_ORG"))
+	cfg.CasdoorDisplayName = envOr("CASDOOR_DISPLAY_NAME", "Casdoor")
+	if ids := os.Getenv("CASDOOR_DESKTOP_CLIENT_IDS"); ids != "" {
+		for id := range strings.SplitSeq(ids, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				cfg.CasdoorDesktopClientIDs = append(cfg.CasdoorDesktopClientIDs, id)
+			}
+		}
+	}
+
+	cfg.TenantEnabled = strings.EqualFold(os.Getenv("TENANT_ENABLED"), "true")
+	cfg.TenantRootDomain = normalizeHost(os.Getenv("TENANT_ROOT_DOMAIN"))
+	cfg.PlatformHost = normalizeHost(os.Getenv("PLATFORM_HOST"))
+	cfg.SessionCookieDomain = normalizeHost(os.Getenv("SESSION_COOKIE_DOMAIN"))
+	cfg.TenantDevOverride = strings.EqualFold(os.Getenv("TENANT_DEV_OVERRIDE"), "true")
+	cfg.DefaultTenantSlug = strings.TrimSpace(os.Getenv("DEFAULT_TENANT_SLUG"))
+	if cfg.DefaultTenantSlug == "" {
+		cfg.DefaultTenantSlug = model.DefaultTenantSlug
+	}
+
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
@@ -222,6 +296,127 @@ func (c *Config) IsDevLoginAllowed() bool {
 	return c.normalizedEnv() == "development" && isLoopbackURL(c.BaseURL)
 }
 
+// IsTenantDevOverrideAllowed reports whether a request may choose its
+// tenant with X-Tenant / ?tenant=. Never in production: the tenant is
+// what isolates one customer's licenses from another's, and a header a
+// caller controls would make that boundary advisory.
+func (c *Config) IsTenantDevOverrideAllowed() bool {
+	return c.TenantDevOverride && !c.IsProduction()
+}
+
+// TenantBaseURL is the public origin of a tenant's workspace. The
+// default tenant keeps BaseURL so links in mail sent before an install
+// turned multi-tenancy on still work.
+func (c *Config) TenantBaseURL(slug string) string {
+	if slug == "" || slug == c.DefaultTenantSlug || c.TenantRootDomain == "" {
+		return strings.TrimRight(c.BaseURL, "/")
+	}
+	u, err := url.Parse(strings.TrimSpace(c.BaseURL))
+	if err != nil {
+		return strings.TrimRight(c.BaseURL, "/")
+	}
+	host := slug + "." + c.TenantRootDomain
+	if port := u.Port(); port != "" {
+		host += ":" + port
+	}
+	u.Host = host
+	u.Path, u.RawQuery, u.Fragment = "", "", ""
+	return strings.TrimRight(u.String(), "/")
+}
+
+// PlatformBaseURL is the origin of the platform console.
+func (c *Config) PlatformBaseURL() string {
+	if c.PlatformHost == "" {
+		return strings.TrimRight(c.BaseURL, "/")
+	}
+	u, err := url.Parse(strings.TrimSpace(c.BaseURL))
+	if err != nil {
+		return strings.TrimRight(c.BaseURL, "/")
+	}
+	host := c.PlatformHost
+	if port := u.Port(); port != "" {
+		host += ":" + port
+	}
+	u.Host = host
+	u.Path, u.RawQuery, u.Fragment = "", "", ""
+	return strings.TrimRight(u.String(), "/")
+}
+
+// IsPlatformHost reports whether host is the platform console, not a
+// tenant workspace.
+func (c *Config) IsPlatformHost(host string) bool {
+	return c.PlatformHost != "" && normalizeHost(host) == c.PlatformHost
+}
+
+// TenantSlugFromHost extracts the tenant slug from a request host.
+// root reports a request for the bare root domain, which the middleware
+// maps to the default tenant. A host outside the root domain, with more
+// than one label in front of it, or with an invalid slug is not a tenant
+// host.
+func (c *Config) TenantSlugFromHost(host string) (slug string, root, ok bool) {
+	h := normalizeHost(host)
+	if h == "" || c.TenantRootDomain == "" {
+		return "", false, false
+	}
+	if h == c.TenantRootDomain {
+		return c.DefaultTenantSlug, true, true
+	}
+	label, found := strings.CutSuffix(h, "."+c.TenantRootDomain)
+	if !found || strings.Contains(label, ".") || !model.IsValidTenantSlug(label) {
+		return "", false, false
+	}
+	return label, false, true
+}
+
+// IsAllowedOrigin reports whether a browser Origin may call the API
+// with credentials. With tenancy on, every tenant subdomain of the root
+// domain is allowed, as is the platform console; otherwise this is the
+// single BaseURL origin, as before.
+func (c *Config) IsAllowedOrigin(origin string) bool {
+	u, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "https" && !(scheme == "http" && !c.IsProduction()) {
+		return false
+	}
+	host := normalizeHost(u.Host)
+	if base, err := url.Parse(strings.TrimSpace(c.BaseURL)); err == nil && normalizeHost(base.Host) == host {
+		return true
+	}
+	if !c.TenantEnabled {
+		return false
+	}
+	if host == c.PlatformHost || host == c.TenantRootDomain {
+		return true
+	}
+	return strings.HasSuffix(host, "."+c.TenantRootDomain)
+}
+
+// normalizeHost lower-cases a host and drops a scheme, path, port and
+// trailing dot. It leaves a leading dot alone, which is how a cookie
+// Domain names a parent domain.
+func normalizeHost(raw string) string {
+	h := strings.ToLower(strings.TrimSpace(raw))
+	if h == "" {
+		return ""
+	}
+	if strings.Contains(h, "://") {
+		if u, err := url.Parse(h); err == nil {
+			h = u.Host
+		}
+	}
+	h = strings.TrimPrefix(h, "//")
+	if i := strings.IndexAny(h, "/?#"); i >= 0 {
+		h = h[:i]
+	}
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		h = host
+	}
+	return strings.TrimSuffix(h, ".")
+}
+
 // IsAdminEmail checks if an email is in the ADMIN_EMAILS list.
 // Used for backward compatibility and initial setup bootstrap.
 // In normal operation, admin status is determined by the user's role in the database.
@@ -263,6 +458,16 @@ func (c *Config) IsStorageEnabled() bool {
 	return c.StorageBucket != "" &&
 		c.StorageAccessKey != "" &&
 		c.StorageSecretKey != ""
+}
+
+// IsCasdoorEnabled reports whether the OIDC login provider is fully
+// configured. Every field except the webhook secret, organization and
+// display name is required for login to work.
+func (c *Config) IsCasdoorEnabled() bool {
+	return c.CasdoorIssuerURL != "" &&
+		c.CasdoorClientID != "" &&
+		c.CasdoorClientSecret != "" &&
+		c.CasdoorRedirectURL != ""
 }
 
 // IsMasterEncryptionKeyConfigured reports whether the operator supplied the
@@ -340,6 +545,25 @@ func (c *Config) ValidateSecurityDefaults() (warnings []string, fatal []string) 
 	// Master encryption key validation: required when storage is enabled
 	// (release signing needs it) AND validated even when only set without
 	// storage (license-key encryption uses it independently).
+	// Casdoor is all-or-nothing. A half-configured provider would show a
+	// login button that fails at the first redirect, so refuse to start.
+	casdoorFieldsSet := c.CasdoorIssuerURL != "" ||
+		c.CasdoorClientID != "" ||
+		c.CasdoorClientSecret != "" ||
+		c.CasdoorRedirectURL != "" ||
+		c.CasdoorWebhookSecret != ""
+	if casdoorFieldsSet && !c.IsCasdoorEnabled() {
+		fatal = append(fatal, "CASDOOR_*: partial config detected — CASDOOR_ISSUER_URL, CASDOOR_CLIENT_ID, CASDOOR_CLIENT_SECRET and CASDOOR_REDIRECT_URL must all be set together (or all empty to disable)")
+	}
+	if c.IsCasdoorEnabled() && c.IsProduction() {
+		if !strings.HasPrefix(strings.ToLower(c.CasdoorIssuerURL), "https://") && !isLoopbackURL(c.CasdoorIssuerURL) {
+			fatal = append(fatal, "CASDOOR_ISSUER_URL must be https outside development")
+		}
+		if !strings.HasPrefix(strings.ToLower(c.CasdoorRedirectURL), "https://") && !isLoopbackURL(c.CasdoorRedirectURL) {
+			fatal = append(fatal, "CASDOOR_REDIRECT_URL must be https outside development")
+		}
+	}
+
 	switch {
 	case c.IsStorageEnabled() && c.ReleaseKeyEncryptionKey == "":
 		fatal = append(fatal, "RELEASE_KEY_ENCRYPTION_KEY is required when storage is enabled — generate via: openssl rand -hex 32")
@@ -354,6 +578,32 @@ func (c *Config) ValidateSecurityDefaults() (warnings []string, fatal []string) 
 		if _, err := hex.DecodeString(c.ReleaseKeyEncryptionKey); err != nil {
 			fatal = append(fatal, "RELEASE_KEY_ENCRYPTION_KEY is not valid hex: "+err.Error())
 		}
+	}
+
+	// Multi-tenancy: the root domain and platform host are what route a
+	// request to a workspace, so a partial block would serve the wrong
+	// tenant or none.
+	if c.TenantEnabled {
+		if c.TenantRootDomain == "" {
+			fatal = append(fatal, "TENANT_ROOT_DOMAIN is required when TENANT_ENABLED=true")
+		}
+		if c.PlatformHost == "" {
+			fatal = append(fatal, "PLATFORM_HOST is required when TENANT_ENABLED=true")
+		}
+		if !model.IsValidTenantSlug(c.DefaultTenantSlug) {
+			fatal = append(fatal, "DEFAULT_TENANT_SLUG must be 2-32 lower-case letters, digits or hyphens and not reserved, got: '"+c.DefaultTenantSlug+"'")
+		}
+		if c.PlatformHost != "" && c.TenantRootDomain != "" &&
+			c.PlatformHost != c.TenantRootDomain &&
+			!strings.HasSuffix(c.PlatformHost, "."+c.TenantRootDomain) {
+			fatal = append(fatal, "PLATFORM_HOST must be the root domain or a subdomain of TENANT_ROOT_DOMAIN")
+		}
+		if c.IsProduction() && c.SessionCookieDomain == "" {
+			warnings = append(warnings, "SECURITY: SESSION_COOKIE_DOMAIN is empty — a session issued on the platform callback will not reach tenant subdomains; set it to '.<root domain>'")
+		}
+	}
+	if c.TenantDevOverride && c.IsProduction() {
+		fatal = append(fatal, "TENANT_DEV_OVERRIDE must not be enabled in production — a caller could choose the tenant with a header")
 	}
 
 	return

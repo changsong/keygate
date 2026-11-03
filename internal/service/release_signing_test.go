@@ -135,10 +135,10 @@ func TestSigningServiceErrSigningDisabled(t *testing.T) {
 		AEAD:    nil, // disabled
 	})
 
-	if _, err := svc.GenerateForProduct(context.Background(), "p1"); !errors.Is(err, ErrSigningDisabled) {
+	if _, err := svc.GenerateForProduct(context.Background(), "", "p1"); !errors.Is(err, ErrSigningDisabled) {
 		t.Errorf("Generate: expected ErrSigningDisabled, got %v", err)
 	}
-	if _, err := svc.RotateForProduct(context.Background(), "p1", "n"); !errors.Is(err, ErrSigningDisabled) {
+	if _, err := svc.RotateForProduct(context.Background(), "", "p1", "n"); !errors.Is(err, ErrSigningDisabled) {
 		t.Errorf("Rotate: expected ErrSigningDisabled, got %v", err)
 	}
 }
@@ -149,10 +149,10 @@ func TestSigningServiceProductIDRequired(t *testing.T) {
 		Storage: newFakeStorage(),
 		AEAD:    mustAEAD(t),
 	})
-	if _, err := svc.GenerateForProduct(context.Background(), ""); err == nil {
+	if _, err := svc.GenerateForProduct(context.Background(), "", ""); err == nil {
 		t.Error("expected error for empty product_id")
 	}
-	if _, err := svc.RotateForProduct(context.Background(), "", "n"); err == nil {
+	if _, err := svc.RotateForProduct(context.Background(), "", "", "n"); err == nil {
 		t.Error("expected error for empty product_id")
 	}
 }
