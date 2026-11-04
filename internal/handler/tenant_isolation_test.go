@@ -116,3 +116,49 @@ func TestAdminListsAreTenantScoped(t *testing.T) {
 		t.Errorf("acme reading globex licence: %d, want 404", w.Code)
 	}
 }
+
+// Deleting an API key is scoped like every other admin mutation: the id
+// alone must not let one workspace destroy another's key.
+func TestDeleteAPIKeyIsTenantScoped(t *testing.T) {
+	s := scratchStore(t)
+	ctx := t.Context()
+	gin.SetMode(gin.TestMode)
+	h := &AdminHandler{Store: s}
+
+	mk := func(slug string) (*model.Tenant, *model.APIKey) {
+		t.Helper()
+		tn := &model.Tenant{Slug: slug, Name: slug}
+		if err := s.CreateTenant(ctx, tn); err != nil {
+			t.Fatalf("create tenant %s: %v", slug, err)
+		}
+		ak := &model.APIKey{TenantID: tn.ID, Name: slug + " key", Prefix: "kg_live_", Scopes: []string{"admin"}}
+		if err := s.CreateAPIKey(ctx, ak, "kg_live_"+slug); err != nil {
+			t.Fatalf("create api key in %s: %v", slug, err)
+		}
+		return tn, ak
+	}
+	acme, acmeKey := mk("acme")
+	_, globexKey := mk("globex")
+
+	del := func(tenantID, id string) int {
+		t.Helper()
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodDelete, "/admin/api-keys/"+id, nil)
+		c.Params = gin.Params{{Key: "id", Value: id}}
+		c.Set("tenant_id", tenantID)
+		h.DeleteAPIKey(c)
+		// A 204 has no body, so the recorder never sees the status.
+		return c.Writer.Status()
+	}
+
+	if code := del(acme.ID, globexKey.ID); code != http.StatusNotFound {
+		t.Errorf("acme deleting globex key: %d, want 404", code)
+	}
+	if _, err := s.FindAPIKeyByID(ctx, globexKey.ID); err != nil {
+		t.Errorf("globex key was deleted by another workspace: %v", err)
+	}
+	if code := del(acme.ID, acmeKey.ID); code != http.StatusNoContent {
+		t.Errorf("acme deleting own key: %d, want 204", code)
+	}
+}

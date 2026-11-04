@@ -2574,6 +2574,13 @@ func (h *AdminHandler) RotateAPIKey(c *gin.Context) {
 
 func (h *AdminHandler) DeleteAPIKey(c *gin.Context) {
 	id := c.Param("id")
+	// The delete itself matches on id alone, so resolve the row through
+	// the caller's workspace first: a scoped admin must not be able to
+	// reach another tenant's key by guessing its id.
+	if _, err := h.Store.FindAPIKeyForTenant(c, tenantID(c), id); err != nil {
+		response.NotFound(c, "api key not found")
+		return
+	}
 	pid := h.Store.ProductOfAudited(c, "api_key", id) // gone after the delete
 	if err := h.Store.DeleteAPIKey(c, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
