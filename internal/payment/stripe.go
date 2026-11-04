@@ -1131,6 +1131,9 @@ func (h *StripeHandler) VerifyCheckoutSession(c *gin.Context) {
 		response.BadRequest(c, "session_id is required")
 		return
 	}
+	if !paymentsConfigured(c) {
+		return
+	}
 
 	sess, err := session.Get(sessionID, &stripe.CheckoutSessionParams{})
 	if err != nil {
@@ -3129,6 +3132,9 @@ func (h *StripeHandler) CancelSubscription(c *gin.Context) {
 		response.BadRequest(c, "no active subscription")
 		return
 	}
+	if !paymentsConfigured(c) {
+		return
+	}
 
 	// Once Stripe has the cancel, the writes and what they tell finish
 	// even if the customer closes the page.
@@ -3204,11 +3210,25 @@ func (h *StripeHandler) CancelSubscription(c *gin.Context) {
 		}
 		// Set ValidUntil to when Stripe will cancel the subscription;
 		// without that date in the answer, the webhook that follows
-		// sets it rather than the epoch.
+		// sets it rather than the epoch. Stamped like other subscription
+		// writes: an unguarded UpdateLicense could land after an
+		// immediate cancel and push valid_until back out, restoring
+		// access on a canceled licence.
 		if sub.CancelAt > 0 {
 			periodEnd := time.Unix(sub.CancelAt, 0)
 			lic.ValidUntil = &periodEnd
-			_ = h.Store.UpdateLicense(ctx, lic, "valid_until")
+			if stampErr != nil {
+				slog.Warn("stripe: cancel-at-period-end valid_until not stamped", "license_id", lic.ID, "error", stampErr)
+			} else if err := h.Store.UpdateLicenseFromSubscriptionRead(ctx, lic, cancelAsOf, "valid_until"); err != nil {
+				// Stale or restricted (immediate cancel already ended it):
+				// the subscription.updated webhook that follows records
+				// the period end if it still should.
+				if !errors.Is(err, store.ErrStaleSubscriptionRead) &&
+					!errors.Is(err, store.ErrLicenseRestricted) &&
+					!errors.Is(err, store.ErrSubscriptionUnlinked) {
+					slog.Warn("stripe: cancel-at-period-end valid_until not written", "license_id", lic.ID, "error", err)
+				}
+			}
 		}
 		// It now runs out rather than renews: the expiry reminder applies,
 		// not "renews tomorrow". The subscription.updated webhook that
@@ -3553,6 +3573,9 @@ func (h *StripeHandler) CreatePortalSession(c *gin.Context) {
 		response.BadRequest(c, "no Stripe customer associated")
 		return
 	}
+	if !paymentsConfigured(c) {
+		return
+	}
 
 	// Stripe sends the customer back to return_url, so only a page of
 	// this site is accepted; anything else falls back to the portal.
@@ -3573,6 +3596,16 @@ func (h *StripeHandler) CreatePortalSession(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"url": s.URL})
+}
+
+// paymentsConfigured answers 503 and reports false when this install has
+// no Stripe key: a call to Stripe without one fails, and is still made.
+func paymentsConfigured(c *gin.Context) bool {
+	if stripe.Key == "" {
+		response.Err(c, http.StatusServiceUnavailable, "PAYMENTS_UNAVAILABLE", "payments are not configured")
+		return false
+	}
+	return true
 }
 
 // ListInvoices returns invoice history for a license's Stripe customer.
@@ -3601,6 +3634,9 @@ func (h *StripeHandler) ListInvoices(c *gin.Context) {
 
 	if lic.StripeCustomerID == "" {
 		response.OK(c, gin.H{"invoices": []any{}})
+		return
+	}
+	if !paymentsConfigured(c) {
 		return
 	}
 
