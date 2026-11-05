@@ -38,6 +38,30 @@ func (s *Store) FindSelfSignupLicense(ctx context.Context, productID, email stri
 	return l, err
 }
 
+// ListLicensesByProductEmail returns the licences email holds for
+// productID, newest first, with the plan loaded so the caller can judge
+// whether the key still works (the plan's grace period is part of that).
+// Ownership follows the portal's rule: a licence bound to an account
+// counts only for that account; an unbound one counts by its address.
+// Self sign-up reads it before minting a trial: an address that already
+// holds a working licence is signed in to that one instead.
+func (s *Store) ListLicensesByProductEmail(ctx context.Context, productID, email, userID string) ([]*model.License, error) {
+	var out []*model.License
+	q := s.DB.NewSelect().Model(&out).
+		Relation("Plan").
+		Where("license.product_id = ?", productID)
+	if userID != "" {
+		q = q.Where(`(license.user_id = ?
+			OR (license.user_id IS NULL AND lower(license.email) = lower(?)))`, userID, email)
+	} else {
+		q = q.Where("license.user_id IS NULL AND lower(license.email) = lower(?)", email)
+	}
+	if err := q.OrderExpr("license.created_at DESC, license.id DESC").Scan(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CreateSelfSignupLicense writes a licence a customer claimed through
 // self sign-up. Under a per-product lock it re-reads the plan and holds
 // it, so a plan switched off, deactivated or given a price since the

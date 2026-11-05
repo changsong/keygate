@@ -576,6 +576,71 @@ func TestSelfSignup_ConsentWordingChanged(t *testing.T) {
 	}
 }
 
+// An address that already holds a licence that still works is signed in
+// to it: self sign-up does not mint a trial beside a paid licence.
+func TestSelfSignup_WorkingPaidLicenceGetsNoTrial(t *testing.T) {
+	f := newSignupFixture(t, func(p *model.Plan) { p.LicenseType = "trial"; p.TrialDays = 14 })
+	paidPlan := &model.Plan{
+		ProductID: f.plan.ProductID, Name: "Paid", Slug: "paid-" + f.plan.CheckoutID,
+		LicenseType: "subscription", BillingInterval: "month", LicenseModel: "standard", MaxActivations: 1,
+	}
+	if err := f.s.CreatePlan(f.ctx, paidPlan); err != nil {
+		t.Fatalf("create paid plan: %v", err)
+	}
+	email := "paid-" + f.plan.CheckoutID + "@example.com"
+	paid := &model.License{
+		ProductID: f.plan.ProductID, PlanID: paidPlan.ID, Email: email,
+		LicenseKey: "KG-PAID-" + f.plan.CheckoutID, Status: model.StatusActive, UpdatesTermsSet: true,
+	}
+	if err := f.s.CreateLicense(f.ctx, paid); err != nil {
+		t.Fatalf("create paid licence: %v", err)
+	}
+
+	w, out := f.verify(email, f.code(email), false)
+	if w.Code != http.StatusOK || dataField(out, "status") != "existing" ||
+		dataField(out, "license_id") != paid.ID || dataField(out, "license_usable") != true {
+		t.Fatalf("claim with a working paid licence: %d %s", w.Code, w.Body.String())
+	}
+	if ls := f.licences(email); len(ls) != 1 || ls[0].ID != paid.ID {
+		t.Fatalf("%d licences after the claim, want only the paid one", len(ls))
+	}
+}
+
+// A lapsed paid licence does not block the trial: that customer is
+// exactly who the trial is for.
+func TestSelfSignup_LapsedPaidLicenceGetsTrial(t *testing.T) {
+	f := newSignupFixture(t, func(p *model.Plan) { p.LicenseType = "trial"; p.TrialDays = 14 })
+	paidPlan := &model.Plan{
+		ProductID: f.plan.ProductID, Name: "Paid", Slug: "paid-" + f.plan.CheckoutID,
+		LicenseType: "subscription", BillingInterval: "month", LicenseModel: "standard", MaxActivations: 1,
+	}
+	if err := f.s.CreatePlan(f.ctx, paidPlan); err != nil {
+		t.Fatalf("create paid plan: %v", err)
+	}
+	if _, err := f.s.DB.NewUpdate().Model((*model.Plan)(nil)).Set("grace_days = 0").
+		Where("id = ?", paidPlan.ID).Exec(f.ctx); err != nil {
+		t.Fatalf("grace: %v", err)
+	}
+	email := "lapsed-" + f.plan.CheckoutID + "@example.com"
+	past := time.Now().Add(-time.Hour)
+	paid := &model.License{
+		ProductID: f.plan.ProductID, PlanID: paidPlan.ID, Email: email,
+		LicenseKey: "KG-LAPSED-" + f.plan.CheckoutID, Status: model.StatusActive,
+		ValidUntil: &past, UpdatesTermsSet: true,
+	}
+	if err := f.s.CreateLicense(f.ctx, paid); err != nil {
+		t.Fatalf("create paid licence: %v", err)
+	}
+
+	w, out := f.verify(email, f.code(email), false)
+	if w.Code != http.StatusCreated || dataField(out, "status") != "created" {
+		t.Fatalf("claim with a lapsed paid licence: %d %s", w.Code, w.Body.String())
+	}
+	if ls := f.licences(email); len(ls) != 2 {
+		t.Fatalf("%d licences after the claim, want the paid one and the trial", len(ls))
+	}
+}
+
 // A claim on a licence that was revoked tells the form so.
 func TestSelfSignup_ExistingReportsItsStatus(t *testing.T) {
 	f := newSignupFixture(t, nil)

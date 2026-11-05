@@ -161,6 +161,19 @@ func (h *AuthHandler) SignupVerify(c *gin.Context) {
 		return
 	}
 
+	// An address that already holds a licence that still works is
+	// signed in to it instead of being handed a trial — whichever plan
+	// or source it came from. Only a lapsed licence (expired, revoked,
+	// suspended) leaves the way open: that customer is exactly who the
+	// trial is for.
+	if existing, err := h.usableLicenseForProduct(c, plan.ProductID, email); err != nil {
+		response.Internal(c, err)
+		return
+	} else if existing != nil {
+		h.signInExisting(c, email, existing)
+		return
+	}
+
 	// One self sign-up licence per address per product: a second claim
 	// signs in to the first (on whatever plan it is now) instead of
 	// minting another.
@@ -287,12 +300,47 @@ func (h *AuthHandler) SignupVerify(c *gin.Context) {
 	response.Created(c, gin.H{"status": "created", "license_id": l.ID})
 }
 
-// signInExisting signs email in to the self sign-up licence it already
-// holds. The address holds a licence, so making its account here is
-// what a login would do anyway. Whether that licence still works goes
-// back too, judged the way verification judges it: one that was
-// revoked or has run out is still the address's one claim, and the
-// form says so rather than "you already have it".
+// usableLicenseForProduct returns the licence email already holds for
+// product that works right now, preferring a non-trial one over a trial,
+// or nil when there is none. A lapsed licence does not count: the trial
+// exists for exactly that customer. Usability is judged the same way
+// activation and verification judge it, including the plan's grace.
+func (h *AuthHandler) usableLicenseForProduct(c *gin.Context, productID, email string) (*model.License, error) {
+	// Read the account without creating one: a refused claim must not
+	// leave an account behind under signup_mode=licensed_only.
+	userID := ""
+	switch user, err := h.Store.FindUserByEmail(c, email); {
+	case err == nil:
+		userID = user.ID
+	case !errors.Is(err, sql.ErrNoRows):
+		return nil, err
+	}
+	licenses, err := h.Store.ListLicensesByProductEmail(c, productID, email, userID)
+	if err != nil {
+		return nil, err
+	}
+	var trial *model.License
+	for _, l := range licenses {
+		if service.LicenseUsable(l) != nil {
+			continue
+		}
+		if l.Status != model.StatusTrialing {
+			return l, nil
+		}
+		if trial == nil {
+			trial = l
+		}
+	}
+	return trial, nil
+}
+
+// signInExisting signs email in to a licence it already holds — a self
+// sign-up one, or any other for the product. The address holds a
+// licence, so making its account here is what a login would do anyway.
+// Whether that licence still works goes back too, judged the way
+// verification judges it: one that was revoked or has run out is still
+// the address's claim, and the form says so rather than "you already
+// have it".
 func (h *AuthHandler) signInExisting(c *gin.Context, email string, l *model.License) {
 	user, err := h.loginUser(c, email)
 	if err != nil {
