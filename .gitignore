@@ -48,3 +48,7 @@ seed
 
 # Stray build output from `go build ./cmd/server` without -o
 /server
+
+# Marketing site build output and deploy tarballs
+website/site/
+website/.deploy-*.tar.gz

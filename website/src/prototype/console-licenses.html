@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_dashboard" name="shell-type"/>
+<meta name="description" content="UnionUser console design prototype: licenses and device queue."/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>UnionUser Console · Licenses &amp; Device Queue</title><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+          "on-primary-container": "#dad7ff",
+          "on-secondary-fixed-variant": "#47464a",
+          "surface-tint": "#4d44e3",
+          "outline": "#777587",
+          "text-muted": "#A1A1AA",
+          "tertiary-container": "#006e4b",
+          "on-secondary-container": "#656467",
+          "secondary-container": "#e4e1e6",
+          "surface": "#fbf8ff",
+          "primary-container": "#4f46e5",
+          "on-background": "#1a1b22",
+          "surface-variant": "#e3e1ec",
+          "secondary-fixed": "#e4e1e6",
+          "badge-success-bg": "#ECFDF5",
+          "on-secondary-fixed": "#1b1b1e",
+          "badge-alert-text": "#B91C1C",
+          "surface-container-highest": "#e3e1ec",
+          "on-surface-variant": "#464555",
+          "on-primary-fixed": "#0f0069",
+          "primary": "#3525cd",
+          "tertiary": "#005338",
+          "code-dark-bg": "#0B1220",
+          "border-hairline": "#E4E4E7",
+          "inverse-on-surface": "#f1effa",
+          "surface-container-lowest": "#ffffff",
+          "badge-alert-bg": "#FEF2F2",
+          "canvas-bg": "#FAFAFA",
+          "on-primary-fixed-variant": "#3323cc",
+          "background": "#fbf8ff",
+          "on-tertiary": "#ffffff",
+          "surface-card": "#FFFFFF",
+          "on-surface": "#1a1b22",
+          "surface-container-high": "#e8e7f1",
+          "on-tertiary-fixed-variant": "#005236",
+          "surface-dim": "#dad9e3",
+          "on-tertiary-fixed": "#002113",
+          "surface-subtle": "#F4F4F5",
+          "outline-variant": "#c7c4d8",
+          "inverse-primary": "#c3c0ff",
+          "error": "#ba1a1a",
+          "text-primary": "#09090B",
+          "badge-success-text": "#047857",
+          "error-container": "#ffdad6",
+          "on-error": "#ffffff",
+          "on-error-container": "#93000a",
+          "surface-bright": "#fbf8ff",
+          "secondary-fixed-dim": "#c8c5ca",
+          "tertiary-fixed": "#6ffbbe",
+          "on-tertiary-container": "#67f4b7",
+          "on-primary": "#ffffff",
+          "tertiary-fixed-dim": "#4edea3",
+          "text-secondary": "#52525B",
+          "primary-fixed-dim": "#c3c0ff",
+          "secondary": "#5f5e61",
+          "surface-container-low": "#f4f2fd",
+          "inverse-surface": "#2f3038",
+          "border-focus": "#4F46E5",
+          "primary-fixed": "#e2dfff",
+          "surface-container": "#eeedf7",
+          "on-secondary": "#ffffff"
+        },
+        "borderRadius": {
+          "DEFAULT": "0.25rem",
+          "lg": "0.5rem",
+          "xl": "0.75rem",
+          "full": "9999px"
+        },
+        "spacing": {
+          "gutter": "1.5rem",
+          "space-sm": "0.5rem",
+          "gutter-mobile": "1rem",
+          "space-lg": "1.5rem",
+          "space-xs": "0.25rem",
+          "space-xl": "2.5rem",
+          "margin": "3rem",
+          "space-md": "1rem",
+          "margin-mobile": "1.25rem"
+        },
+        "fontFamily": {
+          "body-md": ["Inter"],
+          "label-ui": ["Inter"],
+          "headline-lg": ["Inter"],
+          "body-lg": ["Inter"],
+          "label-mono-sm": ["JetBrains Mono"],
+          "headline-lg-mobile": ["Inter"],
+          "label-code": ["JetBrains Mono"],
+          "body-sm": ["Inter"],
+          "headline-sm": ["Inter"],
+          "headline-md": ["Inter"],
+          "display": ["Inter"]
+        },
+        "fontSize": {
+          "body-md": ["0.9375rem", {"lineHeight": "1.5", "letterSpacing": "-0.005em", "fontWeight": "400"}],
+          "label-ui": ["0.75rem", {"lineHeight": "1.2", "letterSpacing": "0.01em", "fontWeight": "600"}],
+          "headline-lg": ["2.25rem", {"lineHeight": "1.2", "letterSpacing": "-0.025em", "fontWeight": "600"}],
+          "body-lg": ["1.125rem", {"lineHeight": "1.6", "letterSpacing": "-0.01em", "fontWeight": "400"}],
+          "label-mono-sm": ["0.6875rem", {"lineHeight": "1.3", "letterSpacing": "0.02em", "fontWeight": "500"}],
+          "headline-lg-mobile": ["1.75rem", {"lineHeight": "1.25", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+          "label-code": ["0.8125rem", {"lineHeight": "1.4", "letterSpacing": "-0.01em", "fontWeight": "500"}],
+          "body-sm": ["0.8125rem", {"lineHeight": "1.45", "letterSpacing": "0", "fontWeight": "400"}],
+          "headline-sm": ["1.125rem", {"lineHeight": "1.4", "letterSpacing": "-0.015em", "fontWeight": "600"}],
+          "headline-md": ["1.5rem", {"lineHeight": "1.3", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+          "display": ["3.5rem", {"lineHeight": "1.1", "letterSpacing": "-0.03em", "fontWeight": "600"}]
+        }
+      }
+    }
+  };</script><style>
+  .prototype-back{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:8px;padding:6px 8px;border-radius:8px;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:#52525B;border:1px dashed #E4E4E7;text-decoration:none;}
+  .prototype-back:hover{background:#fff;color:#09090B;}
+  @media (max-width:1023px){
+    aside.fixed{display:none!important;}
+    .pl-64{padding-left:0!important;}
+    header.fixed{left:0!important;right:0!important;}
+  }
+</style>
+</head><body class="bg-surface font-body-md text-on-surface antialiased"><aside class="fixed left-0 top-0 h-screen w-64 bg-surface-card border-r border-border-hairline z-50 flex flex-col justify-between select-none"><div class="flex flex-col flex-1 overflow-y-auto"><div class="h-14 px-space-md flex items-center justify-between border-b border-border-hairline"><div class="flex items-center gap-space-sm"><div class="w-6 h-6 rounded-lg bg-primary-container flex items-center justify-center"><span class="material-symbols-outlined text-surface-card text-[15px]">terminal</span></div><div class="flex flex-col"><span class="font-headline-sm text-headline-sm text-text-primary leading-none tracking-tight">UnionUser</span><span class="font-label-mono-sm text-label-mono-sm text-text-muted mt-0.5">CONSOLE v2.4</span></div></div><span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.5 rounded bg-surface-subtle border border-border-hairline text-text-secondary">DEV</span></div><div class="p-space-sm"><div class="px-space-sm pt-space-sm pb-space-xs"><span class="font-label-ui text-label-ui uppercase tracking-wider text-text-muted">Developer Suite</span></div><nav class="space-y-0.5" data-active-classes="bg-surface-subtle text-text-primary font-semibold"><a class="group flex items-center justify-between px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="queue"><div class="flex items-center gap-2.5"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">move_to_inbox</span><span class="font-body-sm text-body-sm">Queue</span></div><span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.5 rounded bg-badge-alert-bg border border-border-hairline text-badge-alert-text font-medium">12</span></a><a aria-current="page" class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg transition-colors bg-surface-subtle text-text-primary font-semibold" data-path="licenses"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">key</span><span class="font-body-sm text-body-sm">Licenses</span></a><a class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="devices-&amp;-seats"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">devices</span><span class="font-body-sm text-body-sm">Devices &amp; Seats</span></a><a class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="releases-&amp;-updates"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">deployed_code</span><span class="font-body-sm text-body-sm">Releases &amp; Updates</span></a><a class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="webhooks-&amp;-api"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">webhook</span><span class="font-body-sm text-body-sm">Webhooks &amp; API</span></a><a class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="analytics"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">bar_chart_4_bars</span><span class="font-body-sm text-body-sm">Analytics</span></a><a class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="settings"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">settings</span><span class="font-body-sm text-body-sm">Settings</span></a></nav><div class="px-space-sm pt-space-lg pb-space-xs"><span class="font-label-ui text-label-ui uppercase tracking-wider text-text-muted">Organization</span></div><nav class="space-y-0.5" data-active-classes="bg-surface-subtle text-text-primary font-semibold"><a class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="members"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">group</span><span class="font-body-sm text-body-sm">Members</span></a><a class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="billing-&amp;-invoicing"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">credit_card</span><span class="font-body-sm text-body-sm">Billing &amp; Invoicing</span></a><a class="group flex items-center gap-2.5 px-space-sm py-1.5 rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-on-surface transition-colors" data-path="audit-logs"><span class="material-symbols-outlined text-[18px] text-text-muted group-hover:text-on-surface">receipt_long</span><span class="font-body-sm text-body-sm">Audit Logs</span></a></nav></div></div><div class="p-space-sm border-t border-border-hairline bg-surface-subtle/50"><div class="flex items-center justify-between px-space-sm py-1.5 rounded-lg border border-border-hairline bg-surface-card"><div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-badge-success-text"></span><span class="font-label-mono-sm text-label-mono-sm text-text-secondary">API: Operational</span></div><span class="font-label-mono-sm text-label-mono-sm text-text-muted">24ms</span></div><a class="prototype-back" href="/">← 返回官网 / Back to site</a></div></aside><div class="pl-64"><header class="fixed top-0 left-64 right-0 h-14 bg-surface-card/90 backdrop-blur-md border-b border-border-hairline z-40 px-space-md flex items-center justify-between"><div class="flex items-center gap-space-sm"><div class="flex items-center gap-1.5 text-text-secondary"><span class="font-body-sm text-body-sm text-text-muted hover:text-on-surface cursor-pointer transition-colors">Acme Labs</span><span class="text-border-hairline font-label-mono-sm">/</span><span class="font-body-sm text-body-sm font-semibold text-text-primary">Core Engine</span></div><div class="h-4 w-px bg-border-hairline mx-1"></div><div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-badge-success-bg border border-border-hairline"><span class="w-1.5 h-1.5 rounded-full bg-badge-success-text"></span><span class="font-label-mono-sm text-label-mono-sm text-badge-success-text font-medium">Production v2.4</span></div></div><div class="flex items-center gap-space-sm"><button class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-surface-subtle border border-border-hairline text-text-muted hover:text-on-surface transition-colors" type="button"><span class="material-symbols-outlined text-[16px]">search</span><span class="font-body-sm text-body-sm pr-4">Quick search...</span><kbd class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.5 bg-surface-card rounded border border-border-hairline text-text-secondary">⌘K</kbd></button><div class="flex items-center p-0.5 rounded-lg border border-border-hairline bg-surface-subtle"><button class="p-1 rounded text-text-secondary hover:text-on-surface hover:bg-surface-card transition-colors" title="Compact Density" type="button"><span class="material-symbols-outlined text-[16px]">density_small</span></button><button class="p-1 rounded bg-surface-card text-text-primary shadow-xs" title="Standard Density" type="button"><span class="material-symbols-outlined text-[16px]">density_medium</span></button></div><button class="p-1.5 text-text-muted hover:text-on-surface transition-colors" title="System Documentation" type="button"><span class="material-symbols-outlined text-[20px]">help</span></button><button class="p-1.5 text-text-muted hover:text-on-surface transition-colors relative" title="Notifications" type="button"><span class="material-symbols-outlined text-[20px]">notifications</span><span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-primary-container"></span></button><div class="h-4 w-px bg-border-hairline mx-0.5"></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></header><main class="w-full pt-14 px-space-lg bg-canvas-bg min-h-screen"><div class="flex flex-col w-full pb-16">
+<!-- Top Action & Title Header (matches Rillo reference style) -->
+<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-space-md mb-space-lg">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<h1 class="font-headline-lg text-headline-lg text-text-primary tracking-tight">Licenses &amp; Device Queue</h1>
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded-full bg-badge-alert-bg text-badge-alert-text font-medium">12 flagged</span>
+</div>
+<p class="font-body-md text-body-md text-text-secondary">
+        12 activations flagged for review, 1,428 cleared automatically today across macOS, Windows and Linux clients.
+      </p>
+</div>
+<!-- Quick Action / Date Pill / Filter Controls -->
+<div class="flex flex-wrap items-center gap-space-sm self-start lg:self-center">
+<!-- Date Range Button with Calendar Popover trigger -->
+<div class="relative">
+<button class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-card text-text-primary shadow-sm hover:bg-surface-subtle transition-colors" id="dateRangeBtn" type="button">
+<span class="material-symbols-outlined text-[16px] text-text-secondary">calendar_today</span>
+<span class="font-body-sm text-body-sm font-medium">Last 7 days</span>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">15 Aug – 21 Aug</span>
+<span class="material-symbols-outlined text-[16px] text-text-muted ml-0.5">keyboard_arrow_down</span>
+</button>
+<!-- Date Range Popover Card (matching Rillo reference Image 1 popover) -->
+<div class="hidden absolute right-0 mt-2 w-96 rounded-xl bg-surface-card shadow-xl p-space-md z-50" id="datePopover">
+<div class="flex items-center justify-between pb-3">
+<span class="font-label-ui text-label-ui text-text-primary uppercase tracking-wider">Date range</span>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">Applies to queue only</span>
+</div>
+<div class="grid grid-cols-12 gap-3 pt-2">
+<!-- Preset ranges column -->
+<div class="col-span-5 space-y-1.5 font-body-sm text-body-sm text-text-secondary">
+<button class="w-full text-left px-2 py-1.5 rounded-lg bg-surface-subtle text-primary font-semibold flex items-center gap-2" type="button">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container"></span>
+<span>Last 7 days</span>
+</button>
+<button class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-surface-subtle text-text-secondary" type="button">Last 30 days</button>
+<button class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-surface-subtle text-text-secondary" type="button">This quarter</button>
+<button class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-surface-subtle text-text-secondary" type="button">Year to date</button>
+<button class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-surface-subtle text-text-secondary" type="button">Custom range</button>
+</div>
+<!-- Mini dual-calendar preview -->
+<div class="col-span-7 pl-2">
+<div class="flex items-center justify-between text-center mb-2">
+<span class="font-label-ui text-label-ui text-text-primary font-semibold">August 2026</span>
+<span class="material-symbols-outlined text-[14px] text-text-muted cursor-pointer">chevron_right</span>
+</div>
+<div class="grid grid-cols-7 gap-1 text-center font-label-mono-sm text-label-mono-sm text-text-muted mb-1">
+<span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+</div>
+<div class="grid grid-cols-7 gap-1 text-center font-label-mono-sm text-label-mono-sm text-text-secondary">
+<span class="text-text-muted/40">28</span><span class="text-text-muted/40">29</span><span class="text-text-muted/40">30</span><span class="text-text-muted/40">31</span><span>1</span><span>2</span><span>3</span>
+<span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
+<span>11</span><span>12</span><span>13</span><span>14</span>
+<span class="rounded bg-primary-container text-on-primary font-bold">15</span>
+<span class="rounded bg-primary-fixed text-text-primary">16</span>
+<span class="rounded bg-primary-fixed text-text-primary">17</span>
+<span class="rounded bg-primary-fixed text-text-primary">18</span>
+<span class="rounded bg-primary-fixed text-text-primary">19</span>
+<span class="rounded bg-primary-fixed text-text-primary">20</span>
+<span class="rounded bg-primary-container text-on-primary font-bold">21</span>
+<span>22</span><span>23</span><span>24</span>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between pt-4 mt-3">
+<span class="font-label-mono-sm text-label-mono-sm text-text-secondary">15 Aug – 21 Aug 2026 · 7 days</span>
+<div class="flex items-center gap-2">
+<button class="px-2.5 py-1 text-text-muted hover:text-text-primary font-body-sm text-body-sm" onclick="document.getElementById('datePopover').classList.add('hidden')" type="button">Cancel</button>
+<button class="px-3 py-1 rounded-lg bg-text-primary text-surface-card hover:opacity-90 font-body-sm text-body-sm font-medium" onclick="document.getElementById('datePopover').classList.add('hidden')" type="button">Apply</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Filter button -->
+<button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-card text-text-secondary hover:text-text-primary shadow-sm transition-colors" type="button">
+<span class="material-symbols-outlined text-[16px]">tune</span>
+<span class="font-body-sm text-body-sm font-medium">Filter</span>
+</button>
+<!-- Sort button -->
+<button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-card text-text-secondary hover:text-text-primary shadow-sm transition-colors" type="button">
+<span class="material-symbols-outlined text-[16px]">swap_vert</span>
+<span class="font-body-sm text-body-sm font-medium">Sort</span>
+</button>
+<!-- Density Toggle (mirroring app shell) -->
+<div class="flex items-center bg-surface-subtle p-0.5 rounded-lg">
+<button class="px-2.5 py-1 rounded-lg text-text-muted hover:text-text-primary font-label-ui text-label-ui" type="button">Compact</button>
+<button class="px-2.5 py-1 rounded-lg bg-surface-card text-text-primary font-label-ui text-label-ui shadow-xs" type="button">Comfortable</button>
+<button class="px-2.5 py-1 rounded-lg text-text-muted hover:text-text-primary font-label-ui text-label-ui" type="button">Spacious</button>
+</div>
+<!-- Export Audit Button -->
+<button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-text-primary text-surface-card hover:opacity-90 shadow-sm transition-opacity" type="button">
+<span class="material-symbols-outlined text-[16px]">download</span>
+<span class="font-body-sm text-body-sm font-medium">Export audit bundle</span>
+</button>
+</div>
+</div>
+<!-- Metric Highlight Cards Row (exact 4-metric grid from Rillo Image 5) -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-space-md mb-space-lg">
+<!-- Card 1: Needs Review -->
+<div class="rounded-xl bg-surface-card p-space-md shadow-sm">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-badge-alert-text"></span>
+<span class="font-label-ui text-label-ui uppercase tracking-wider text-text-secondary font-semibold">Needs Review</span>
+</div>
+<span class="material-symbols-outlined text-text-muted text-[18px]">gpp_maybe</span>
+</div>
+<div class="flex items-baseline gap-2 mb-1">
+<span class="font-headline-lg text-headline-lg text-text-primary font-bold">12</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.5 rounded bg-badge-alert-bg text-badge-alert-text font-medium">High priority</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-muted truncate">3 held over 48h · machine hash mismatch or quota</p>
+</div>
+<!-- Card 2: Auto-Approved Today -->
+<div class="rounded-xl bg-surface-card p-space-md shadow-sm">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-badge-success-text"></span>
+<span class="font-label-ui text-label-ui uppercase tracking-wider text-text-secondary font-semibold">Auto-Approved Today</span>
+</div>
+<span class="material-symbols-outlined text-badge-success-text text-[18px]">verified</span>
+</div>
+<div class="flex items-baseline gap-2 mb-1">
+<span class="font-headline-lg text-headline-lg text-text-primary font-bold">1,428</span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-success-text font-medium">+18% vs yesterday</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-muted truncate">Ed25519 signature &amp; TPM hardware match valid</p>
+</div>
+<!-- Card 3: Active Seats Ratio -->
+<div class="rounded-xl bg-surface-card p-space-md shadow-sm">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary-container"></span>
+<span class="font-label-ui text-label-ui uppercase tracking-wider text-text-secondary font-semibold">Active Seats Ratio</span>
+</div>
+<span class="material-symbols-outlined text-text-muted text-[18px]">devices_other</span>
+</div>
+<div class="flex items-baseline gap-2 mb-1">
+<span class="font-headline-lg text-headline-lg text-text-primary font-bold">84.2%</span>
+<span class="font-label-mono-sm text-label-mono-sm text-text-secondary">3,840 / 4,560</span>
+</div>
+<!-- Mini Progress bar inline SVG -->
+<div class="w-full bg-surface-subtle h-1.5 rounded-full overflow-hidden mt-1">
+<div class="bg-primary-container h-full rounded-full" style="width: 84.2%;"></div>
+</div>
+</div>
+<!-- Card 4: Offline Tokens Expiring -->
+<div class="rounded-xl bg-surface-card p-space-md shadow-sm">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+<span class="font-label-ui text-label-ui uppercase tracking-wider text-text-secondary font-semibold">Offline Tokens Expiring</span>
+</div>
+<span class="material-symbols-outlined text-text-muted text-[18px]">timer</span>
+</div>
+<div class="flex items-baseline gap-2 mb-1">
+<span class="font-headline-lg text-headline-lg text-text-primary font-bold">28</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.5 rounded bg-surface-subtle text-text-secondary font-medium">Within 24h</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-muted truncate">Grace period renewal awaiting peer network ping</p>
+</div>
+</div>
+<!-- Filter Tabs Strip (matching Rillo Image 5 tab row) -->
+<div class="flex items-center gap-1 mb-space-md overflow-x-auto pb-1">
+<button class="px-3.5 py-1.5 rounded-lg bg-surface-card text-text-primary font-body-sm text-body-sm font-semibold shadow-xs flex items-center gap-2 whitespace-nowrap" type="button">
+<span>All</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.2 rounded-full bg-surface-subtle text-text-secondary font-normal">1,440</span>
+</button>
+<button class="px-3.5 py-1.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-card/60 font-body-sm text-body-sm font-medium flex items-center gap-2 whitespace-nowrap" type="button">
+<span class="w-2 h-2 rounded-full bg-badge-alert-text"></span>
+<span>Held &amp; Mismatch</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.2 rounded-full bg-badge-alert-bg text-badge-alert-text font-semibold">12</span>
+</button>
+<button class="px-3.5 py-1.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-card/60 font-body-sm text-body-sm font-medium flex items-center gap-2 whitespace-nowrap" type="button">
+<span>Quota Warning</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.2 rounded-full bg-surface-subtle text-text-muted">5</span>
+</button>
+<button class="px-3.5 py-1.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-card/60 font-body-sm text-body-sm font-medium flex items-center gap-2 whitespace-nowrap" type="button">
+<span>Offline Grace</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.2 rounded-full bg-surface-subtle text-text-muted">3</span>
+</button>
+<button class="px-3.5 py-1.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-card/60 font-body-sm text-body-sm font-medium flex items-center gap-2 whitespace-nowrap" type="button">
+<span>Revoked</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.2 rounded-full bg-surface-subtle text-text-muted">14</span>
+</button>
+</div>
+<!-- Primary Interactive Table & Expanded Decision Record Card -->
+<div class="rounded-xl bg-surface-card shadow-sm overflow-hidden mb-space-lg">
+<!-- Table Header (Rillo ultra-clean grey pill) -->
+<div class="grid grid-cols-12 items-center px-space-md py-2.5 bg-surface-subtle font-label-ui text-label-ui uppercase tracking-wider text-text-muted font-semibold">
+<div class="col-span-1 flex items-center gap-3">
+<input class="w-4 h-4 rounded text-primary-container focus:ring-0 cursor-pointer" type="checkbox"/>
+</div>
+<div class="col-span-3">License &amp; Client</div>
+<div class="col-span-2">Product / Tier</div>
+<div class="col-span-2">Hardware Signature</div>
+<div class="col-span-2">Seat Status</div>
+<div class="col-span-1 text-center">Audit</div>
+<div class="col-span-1 text-right">Action</div>
+</div>
+<!-- ROW 1: EXPANDED FLAGGED ROW (Matches exact expanded audit card from reference image 5) -->
+<div class="p-space-md bg-canvas-bg/60">
+<!-- Row headline line with vendor/memo & category -->
+<div class="grid grid-cols-12 items-center mb-space-md">
+<div class="col-span-1 flex items-center gap-3">
+<input checked="" class="w-4 h-4 rounded text-primary-container focus:ring-0 cursor-pointer" type="checkbox"/>
+</div>
+<div class="col-span-3">
+<div class="flex items-center gap-2">
+<span class="font-headline-sm text-headline-sm font-semibold text-text-primary">Ochieng Mwangi</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.5 rounded bg-surface-subtle text-text-muted">DEV-4091</span>
+</div>
+<span class="font-body-sm text-body-sm text-text-secondary">Core Engine Workstation · Activation request</span>
+</div>
+<div class="col-span-2">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded bg-surface-card text-text-primary font-medium">Enterprise Pro</span>
+<div class="font-label-mono-sm text-label-mono-sm text-text-muted mt-0.5">Seat pool: Dev Cluster 01</div>
+</div>
+<div class="col-span-2">
+<span class="font-label-mono-sm text-label-mono-sm text-text-secondary">macOS · IOPlatformUUID</span>
+<div class="font-label-mono-sm text-label-mono-sm text-badge-alert-text flex items-center gap-1 mt-0.5">
+<span class="w-1.5 h-1.5 rounded-full bg-badge-alert-text"></span> Hash Drift Flagged
+          </div>
+</div>
+<div class="col-span-2">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded bg-badge-alert-bg text-badge-alert-text font-bold">3 of 2 allocated</span>
+<div class="font-body-sm text-body-sm text-text-muted mt-0.5">Quota exceeded (+1)</div>
+</div>
+<div class="col-span-1 text-center">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-1 rounded bg-badge-alert-bg text-badge-alert-text font-semibold">Review</span>
+</div>
+<div class="col-span-1 text-right">
+<button class="text-text-muted hover:text-text-primary p-1" type="button">
+<span class="material-symbols-outlined text-[20px]">expand_less</span>
+</button>
+</div>
+</div>
+<!-- Decision Record Badge Banner (Matching exact text & layout from Image 5) -->
+<div class="flex items-center justify-between mb-3 px-1">
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm font-semibold text-text-primary">Decision record</span>
+<span class="font-label-code text-label-code text-text-secondary bg-surface-card px-2 py-0.5 rounded shadow-xs">txn_9f2c41ab</span>
+<span class="text-text-muted font-label-mono-sm">·</span>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">Held 12 Aug, 14:20 · macOS Sonoma ARM64</span>
+</div>
+<button class="font-label-mono-sm text-label-mono-sm px-2 py-1 rounded bg-surface-card text-text-secondary hover:text-text-primary shadow-xs" type="button">
+          Export audit bundle
+        </button>
+</div>
+<!-- Red Alert Callout Box (Exact match to Image 5 red alert box) -->
+<div class="rounded-lg p-space-md mb-space-md bg-badge-alert-bg text-badge-alert-text">
+<div class="flex items-start gap-2.5">
+<span class="material-symbols-outlined text-[18px] text-badge-alert-text shrink-0 mt-0.5">error</span>
+<div>
+<span class="font-headline-sm text-headline-sm font-semibold block leading-tight">Hardware UUID signature drift detected</span>
+<p class="font-body-sm text-body-sm text-badge-alert-text/90 mt-1">
+              The IOPlatformUUID matches known hash, but CPUID serial rotated. Reported 3 seats active of 2 max allowed on this enterprise tier license. The client cryptographically presented generation artifacts sharing a fingerprint signature with two duplicate workstation nodes.
+            </p>
+</div>
+</div>
+</div>
+<!-- Two-Column Inspection Breakdown Panel (Matching Image 5 & 8) -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-space-md">
+<!-- Left Column: WHAT UNIONUSER CHECKED -->
+<div class="lg:col-span-7 bg-surface-card rounded-xl p-space-md shadow-xs">
+<span class="font-label-ui text-label-ui uppercase tracking-wider text-text-muted font-semibold block mb-3">
+            What UnionUser Checked
+          </span>
+<div class="space-y-3 font-body-sm text-body-sm">
+<!-- Item 1: Cryptographic Ed25519 signature -->
+<div class="flex items-start justify-between pb-2.5">
+<div>
+<span class="font-semibold text-text-primary block">Ed25519 Signature Token</span>
+<span class="text-text-muted font-label-mono-sm text-label-mono-sm">Payload signature validated against root authority cert #9920</span>
+</div>
+<div class="flex items-center gap-1.5 shrink-0 ml-3">
+<span class="w-2 h-2 rounded-full bg-badge-success-text"></span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-success-text font-semibold">Confirmed</span>
+</div>
+</div>
+<!-- Item 2: Hardware Fingerprint match -->
+<div class="flex items-start justify-between pb-2.5">
+<div>
+<span class="font-semibold text-text-primary block">Hardware Fingerprint Hash</span>
+<span class="text-badge-alert-text font-label-mono-sm text-label-mono-sm">Mismatch: IOPlatformUUID identical, but CPUID rotated (+2 revs)</span>
+</div>
+<div class="flex items-center gap-1.5 shrink-0 ml-3">
+<span class="w-2 h-2 rounded-full bg-badge-alert-text"></span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-alert-text font-semibold">Not confirmed</span>
+</div>
+</div>
+<!-- Item 3: Seat Quota Control -->
+<div class="flex items-start justify-between pb-2.5">
+<div>
+<span class="font-semibold text-text-primary block">Seat Quota Enforcement</span>
+<span class="text-text-muted font-label-mono-sm text-label-mono-sm">Allocated 3 devices active. Policy ceiling strictly 2 seats</span>
+</div>
+<div class="flex items-center gap-1.5 shrink-0 ml-3">
+<span class="w-2 h-2 rounded-full bg-badge-alert-text"></span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-alert-text font-semibold">Quota Exceeded</span>
+</div>
+</div>
+<!-- Item 4: Offline Grace Window -->
+<div class="flex items-start justify-between pb-2.5">
+<div>
+<span class="font-semibold text-text-primary block">Offline Grace Window</span>
+<span class="text-text-muted font-label-mono-sm text-label-mono-sm">Valid heartbeat within last 18 hours (exp: 28 days remaining)</span>
+</div>
+<div class="flex items-center gap-1.5 shrink-0 ml-3">
+<span class="w-2 h-2 rounded-full bg-badge-success-text"></span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-success-text font-semibold">Confirmed</span>
+</div>
+</div>
+<!-- Item 5: Replay Protection Nonce -->
+<div class="flex items-start justify-between">
+<div>
+<span class="font-semibold text-text-primary block">Replay Nonce Verification</span>
+<span class="text-text-muted font-label-mono-sm text-label-mono-sm">Nonce 0x7c99e2a1 is monotonic and unique in historical ledger</span>
+</div>
+<div class="flex items-center gap-1.5 shrink-0 ml-3">
+<span class="w-2 h-2 rounded-full bg-badge-success-text"></span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-success-text font-semibold">Confirmed</span>
+</div>
+</div>
+</div>
+<!-- Synthetic Hardware Cluster inspection snippet (From Rillo Image 8) -->
+<div class="mt-space-md pt-space-md bg-surface-subtle/70 rounded-lg p-3">
+<div class="flex items-center justify-between mb-2">
+<span class="font-label-ui text-label-ui uppercase tracking-wider text-text-secondary font-semibold">Synthetic Hardware Cluster</span>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">3 nodes · 1 identical generator</span>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<div class="p-2 rounded bg-surface-card shadow-xs">
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted block">MacBookPro18,1</span>
+<span class="font-label-code text-label-code text-text-primary font-semibold truncate block">08-12 ACTIVE</span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-alert-text">SHA256: 7f8a...</span>
+</div>
+<div class="p-2 rounded bg-surface-card shadow-xs">
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted block">MacBookPro18,1-dup</span>
+<span class="font-label-code text-label-code text-text-primary font-semibold truncate block">08-09 HELD</span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-alert-text">SHA256: 7f8a...</span>
+</div>
+<div class="p-2 rounded bg-surface-card shadow-xs">
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted block">MacBookPro18,2</span>
+<span class="font-label-code text-label-code text-text-primary font-semibold truncate block">08-04 REVOKED</span>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-alert-text">SHA256: 7f8a...</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Column: UNIONUSER PROPOSES (Matches Image 5 right action box) -->
+<div class="lg:col-span-5 bg-surface-card rounded-xl p-space-md shadow-xs flex flex-col justify-between">
+<div>
+<span class="font-label-ui text-label-ui uppercase tracking-wider text-text-muted font-semibold block mb-3">
+              UnionUser Proposes
+            </span>
+<div class="space-y-3">
+<label class="flex items-start gap-2.5 cursor-pointer">
+<input checked="" class="mt-1 text-primary-container focus:ring-0" name="proposal_action" type="radio"/>
+<span class="font-body-sm text-body-sm text-text-primary">
+<strong>Release oldest inactive device</strong> (MacBookPro18,1 last online 14 days ago) and unbind seat.
+                </span>
+</label>
+<label class="flex items-start gap-2.5 cursor-pointer">
+<input class="mt-1 text-primary-container focus:ring-0" name="proposal_action" type="radio"/>
+<span class="font-body-sm text-body-sm text-text-primary">
+<strong>Approve new hardware hash</strong> as primary device and re-sign client activation token.
+                </span>
+</label>
+<label class="flex items-start gap-2.5 cursor-pointer">
+<input class="mt-1 text-primary-container focus:ring-0" name="proposal_action" type="radio"/>
+<span class="font-body-sm text-body-sm text-text-primary">
+<strong>Dispatch notification</strong> to organization admin regarding multi-seat hardware rotation.
+                </span>
+</label>
+<label class="flex items-start gap-2.5 cursor-pointer">
+<input class="mt-1 text-primary-container focus:ring-0" name="proposal_action" type="radio"/>
+<span class="font-body-sm text-body-sm text-text-primary">
+<strong>Move license key to Audit Review</strong> status for the next 30 days.
+                </span>
+</label>
+</div>
+<p class="font-label-mono-sm text-label-mono-sm text-text-muted mt-4 bg-surface-subtle p-2 rounded">
+              Every step is editable before it executes. No cryptographic revocation has been pushed — this device lease is held pending operator authorization.
+            </p>
+</div>
+<!-- Bottom Action Buttons in Right Panel (Matches Image 5) -->
+<div class="flex items-center gap-2 pt-4 mt-4">
+<button class="w-1/2 py-2 px-3 rounded-lg bg-surface-subtle text-text-secondary hover:text-text-primary hover:bg-surface-variant font-body-sm text-body-sm font-semibold transition-colors" type="button">
+              Dismiss
+            </button>
+<button class="w-1/2 py-2 px-3 rounded-lg bg-text-primary text-surface-card hover:opacity-90 font-body-sm text-body-sm font-semibold shadow-sm transition-opacity" type="button">
+              Approve all 4 steps
+            </button>
+</div>
+</div>
+</div>
+</div>
+<!-- ROW 2: Normal Table Row (UU-PRO-8842-X) -->
+<div class="grid grid-cols-12 items-center px-space-md py-3.5 hover:bg-surface-subtle/50 transition-colors">
+<div class="col-span-1 flex items-center gap-3">
+<input class="w-4 h-4 rounded text-primary-container focus:ring-0 cursor-pointer" type="checkbox"/>
+</div>
+<div class="col-span-3">
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm font-semibold text-text-primary">Notion Labs, Inc.</span>
+<span class="font-label-code text-label-code text-text-muted">UU-PRO-8842-X</span>
+</div>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">Annual renewal · seats 60 ➔ 85 · 14 Aug</span>
+</div>
+<div class="col-span-2">
+<span class="font-body-sm text-body-sm text-text-secondary">WeMedia Desktop</span>
+<div class="font-label-mono-sm text-label-mono-sm text-text-muted">Tier: Enterprise Scale</div>
+</div>
+<div class="col-span-2">
+<span class="font-label-code text-label-code text-text-secondary">Win11-TPM-88f2</span>
+<div class="font-label-mono-sm text-label-mono-sm text-badge-success-text">SHA256 Match: 100%</div>
+</div>
+<div class="col-span-2">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded bg-badge-success-bg text-badge-success-text font-semibold">Seat count +42%</span>
+<div class="font-label-mono-sm text-label-mono-sm text-text-muted mt-0.5">85/85 active seats</div>
+</div>
+<div class="col-span-1 text-center">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded bg-surface-subtle text-text-secondary">Auto-Clear</span>
+</div>
+<div class="col-span-1 text-right">
+<button class="px-2.5 py-1 rounded bg-surface-subtle hover:bg-surface-variant font-label-ui text-label-ui text-text-primary transition-colors" type="button">
+          Review
+        </button>
+</div>
+</div>
+<!-- ROW 3: Normal Table Row (Delta Air Lines - Travel/Hardware cluster) -->
+<div class="grid grid-cols-12 items-center px-space-md py-3.5 hover:bg-surface-subtle/50 transition-colors">
+<div class="col-span-1 flex items-center gap-3">
+<input class="w-4 h-4 rounded text-primary-container focus:ring-0 cursor-pointer" type="checkbox"/>
+</div>
+<div class="col-span-3">
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm font-semibold text-text-primary">VectorStudio Pro</span>
+<span class="font-label-code text-label-code text-text-muted">UU-ENT-1049-A</span>
+</div>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">macOS Apple Silicon · Flight Ops Desk</span>
+</div>
+<div class="col-span-2">
+<span class="font-body-sm text-body-sm text-text-secondary">VectorStudio v4.8</span>
+<div class="font-label-mono-sm text-label-mono-sm text-text-muted">Tier: Floating Fleet</div>
+</div>
+<div class="col-span-2">
+<span class="font-label-code text-label-code text-text-secondary">macOS-ARM64-M3</span>
+<div class="font-label-mono-sm text-label-mono-sm text-badge-success-text">Secure Enclave Valid</div>
+</div>
+<div class="col-span-2">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded bg-surface-subtle text-text-secondary font-medium">18 / 20 Seats</span>
+<div class="font-label-mono-sm text-label-mono-sm text-text-muted mt-0.5">2 buffer seats free</div>
+</div>
+<div class="col-span-1 text-center">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded bg-surface-subtle text-text-secondary">Verified</span>
+</div>
+<div class="col-span-1 text-right">
+<button class="px-2.5 py-1 rounded bg-surface-subtle hover:bg-surface-variant font-label-ui text-label-ui text-text-primary transition-colors" type="button">
+          Review
+        </button>
+</div>
+</div>
+<!-- ROW 4: Normal Table Row (Anthropic PBC - TerminalOps GUI) -->
+<div class="grid grid-cols-12 items-center px-space-md py-3.5 hover:bg-surface-subtle/50 transition-colors">
+<div class="col-span-1 flex items-center gap-3">
+<input class="w-4 h-4 rounded text-primary-container focus:ring-0 cursor-pointer" type="checkbox"/>
+</div>
+<div class="col-span-3">
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm font-semibold text-text-primary">Anthropic PBC</span>
+<span class="font-label-code text-label-code text-text-muted">UU-DEV-0092-F</span>
+</div>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">API agent runner · close-bot #4 · 18 Aug</span>
+</div>
+<div class="col-span-2">
+<span class="font-body-sm text-body-sm text-text-secondary">TerminalOps Engine</span>
+<div class="font-label-mono-sm text-label-mono-sm text-text-muted">Tier: Developer Runtime</div>
+</div>
+<div class="col-span-2">
+<span class="font-label-code text-label-code text-text-secondary">Linux-systemd-id</span>
+<div class="font-label-mono-sm text-label-mono-sm text-text-secondary">containerized / VM</div>
+</div>
+<div class="col-span-2">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded bg-surface-subtle text-primary-container font-semibold">1 / 1 Seat active</span>
+<div class="font-label-mono-sm text-label-mono-sm text-text-muted mt-0.5">Lease expires in 4h</div>
+</div>
+<div class="col-span-1 text-center">
+<span class="font-label-mono-sm text-label-mono-sm px-2 py-0.5 rounded bg-surface-subtle text-text-secondary">Auto-Clear</span>
+</div>
+<div class="col-span-1 text-right">
+<button class="px-2.5 py-1 rounded bg-surface-subtle hover:bg-surface-variant font-label-ui text-label-ui text-text-primary transition-colors" type="button">
+          Review
+        </button>
+</div>
+</div>
+</div>
+<!-- Secondary Bento Section: Real-time Telemetry & Cryptographic Verification Hub -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-space-md">
+<!-- Left Bento: Hardware Fingerprint Extraction Log (Dark terminal code block) -->
+<div class="lg:col-span-7 rounded-xl bg-code-dark-bg p-space-md text-surface flex flex-col justify-between shadow-md">
+<div>
+<div class="flex items-center justify-between pb-3">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-primary-fixed">code</span>
+<span class="font-label-code text-label-code text-surface font-semibold">hardware_verifier.rs</span>
+<span class="font-label-mono-sm text-label-mono-sm px-1.5 py-0.2 rounded bg-surface-card/10 text-on-primary-container">Rust 1.78</span>
+</div>
+<button class="flex items-center gap-1.5 font-label-mono-sm text-label-mono-sm px-2 py-1 rounded bg-surface-card/10 text-surface hover:bg-surface-card/20 transition-colors" id="copyCodeBtn" type="button">
+<span class="material-symbols-outlined text-[14px]">content_copy</span>
+<span id="copyCodeText">Copy logic</span>
+</button>
+</div>
+<div class="font-label-code text-label-code text-surface/90 space-y-1 overflow-x-auto pt-2">
+<p><span class="text-text-muted">01</span> <span class="text-primary-fixed font-semibold">pub fn</span> <span class="text-tertiary-fixed">verify_device_entitlement</span>(cert: &amp;ClientCert, hw: &amp;HardwareSpec) -&gt; Result&lt;AuditDecision, SecurityError&gt; {</p>
+<p><span class="text-text-muted">02</span> <span class="text-text-muted">// 1. Compute deterministic hash over platform invariants</span></p>
+<p><span class="text-text-muted">03</span> <span class="text-primary-fixed">let</span> expected_hash = sha256::digest(format!(<span class="text-on-tertiary-container">"{}:{}:{}"</span>, hw.io_platform_uuid, hw.smbios_guid, hw.cpu_id));</p>
+<p><span class="text-text-muted">04</span> <span class="text-primary-fixed">let</span> signature_ok = ed25519::verify(&amp;cert.signed_token, &amp;cert.public_key)?;</p>
+<p><span class="text-text-muted">05</span> </p>
+<p><span class="text-text-muted">06</span> <span class="text-primary-fixed">if</span> !signature_ok { <span class="text-primary-fixed">return</span> Ok(AuditDecision::RevokeToken(<span class="text-badge-alert-bg text-badge-alert-text">"SigInvalid"</span>)); }</p>
+<p><span class="text-text-muted">07</span> <span class="text-primary-fixed">if</span> expected_hash != cert.bound_hardware_hash {</p>
+<p><span class="text-text-muted">08</span> <span class="text-primary-fixed">return</span> Ok(AuditDecision::FlagSignatureDrift { expected: expected_hash, reported: cert.bound_hardware_hash });</p>
+<p><span class="text-text-muted">09</span>   }</p>
+<p><span class="text-text-muted">10</span>   AuditDecision::AutoApprove { verified_at: Utc::now() }</p>
+<p><span class="text-text-muted">11</span> }</p>
+</div>
+</div>
+<div class="flex items-center justify-between pt-4 mt-3 bg-surface-card/5 -mx-space-md -mb-space-md p-space-md rounded-b-xl">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-badge-success-text"></span>
+<span class="font-label-mono-sm text-label-mono-sm text-surface/80">Verifier worker #04 online · p99 latency: 1.4ms</span>
+</div>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">Zero-knowledge hardware binding</span>
+</div>
+</div>
+<!-- Right Bento: Automation Rate & Quick Diagnostic Drawer (Matches Rillo Image 8 right rail) -->
+<div class="lg:col-span-5 rounded-xl bg-surface-card p-space-md shadow-sm flex flex-col justify-between">
+<div>
+<div class="flex items-center justify-between mb-3">
+<span class="font-label-ui text-label-ui uppercase tracking-wider text-text-muted font-semibold">Engine Automation Rate</span>
+<span class="font-label-mono-sm text-label-mono-sm font-bold text-badge-success-text">92.4% Target met</span>
+</div>
+<div class="flex items-baseline gap-2 mb-2">
+<span class="font-display text-headline-lg font-bold text-text-primary">148 of 160</span>
+<span class="font-body-sm text-body-sm text-text-secondary">decisions cleared without human intervention today</span>
+</div>
+<!-- Inline Visual: Segmented automation ledger bar -->
+<div class="w-full bg-surface-subtle h-3 rounded-lg overflow-hidden flex gap-0.5 p-0.5 mb-space-md">
+<div class="bg-badge-success-text h-full rounded-sm" style="width: 78%;" title="Auto Approved"></div>
+<div class="bg-primary-container h-full rounded-sm" style="width: 14%;" title="Grace Extended"></div>
+<div class="bg-badge-alert-text h-full rounded-sm" style="width: 8%;" title="Held for review"></div>
+</div>
+<!-- Diagnostic Items List -->
+<div class="space-y-2.5 font-body-sm text-body-sm">
+<div class="flex items-center justify-between p-2 rounded-lg bg-surface-subtle">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-badge-success-text">check_circle</span>
+<span class="text-text-primary font-medium">TPM 2.0 Attestation Engine</span>
+</div>
+<span class="font-label-mono-sm text-label-mono-sm text-text-secondary">Active</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded-lg bg-surface-subtle">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-badge-success-text">check_circle</span>
+<span class="text-text-primary font-medium">Apple Secure Enclave App Attest</span>
+</div>
+<span class="font-label-mono-sm text-label-mono-sm text-text-secondary">Active</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded-lg bg-surface-subtle">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-badge-alert-text">warning</span>
+<span class="text-text-primary font-medium">Linux MachineID Hash Spoofing Guard</span>
+</div>
+<span class="font-label-mono-sm text-label-mono-sm text-badge-alert-text font-semibold">Strict Mode</span>
+</div>
+</div>
+</div>
+<!-- Operator Signature Tag -->
+<div class="pt-4 mt-4 flex items-center justify-between">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-full bg-surface-subtle flex items-center justify-center font-label-ui text-label-ui font-bold text-text-primary">
+            AS
+          </div>
+<div>
+<span class="font-body-sm text-body-sm font-semibold text-text-primary block leading-none">Amara Sundaram</span>
+<span class="font-label-mono-sm text-label-mono-sm text-text-muted">Lead Cryptographic Controller</span>
+</div>
+</div>
+<button class="font-label-ui text-label-ui px-3 py-1.5 rounded-lg bg-surface-subtle hover:bg-surface-variant text-text-primary transition-colors" type="button">
+          Audit Log
+        </button>
+</div>
+</div>
+</div>
+</div>
+<script>
+  // Simple micro-interactions for date range dropdown & code copy
+  const dateBtn = document.getElementById('dateRangeBtn');
+  const datePopover = document.getElementById('datePopover');
+
+  if (dateBtn && datePopover) {
+    dateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      datePopover.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!datePopover.contains(e.target) && !dateBtn.contains(e.target)) {
+        datePopover.classList.add('hidden');
+      }
+    });
+  }
+
+  const copyBtn = document.getElementById('copyCodeBtn');
+  const copyText = document.getElementById('copyCodeText');
+  if (copyBtn && copyText) {
+    copyBtn.addEventListener('click', () => {
+      copyText.innerText = 'Copied!';
+      setTimeout(() => {
+        copyText.innerText = 'Copy logic';
+      }, 1800);
+    });
+  }
+</script></main></div></body></html>

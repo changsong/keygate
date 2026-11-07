@@ -1,0 +1,12 @@
+{
+  "name": "unionuser-website",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "UnionUser marketing site and documentation",
+  "scripts": {
+    "build": "node build.mjs",
+    "preview": "node scripts/preview.mjs",
+    "check": "node --check build.mjs && node --check src/config.mjs && node --check src/lib/layout.mjs && node --check src/lib/components.mjs && node --check src/lib/pages.mjs && node --check src/lib/docs.mjs"
+  }
+}

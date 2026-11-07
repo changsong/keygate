@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    width: 1200px;
+    height: 630px;
+    background: #0b1220;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Microsoft YaHei", sans-serif;
+    overflow: hidden;
+    position: relative;
+  }
+  .glow {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(600px 380px at 80% 15%, rgba(79,70,229,.55), transparent 65%),
+      radial-gradient(500px 340px at 8% 95%, rgba(52,211,153,.16), transparent 60%);
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);
+    background-size: 52px 52px;
+    mask-image: radial-gradient(ellipse 75% 75% at 50% 40%, #000 30%, transparent 78%);
+  }
+  .inner { position: relative; padding: 64px 72px; height: 100%; display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 14px; font-size: 26px; font-weight: 750; letter-spacing: -.02em; }
+  .brand img { width: 44px; height: 44px; }
+  h1 { margin: 54px 0 18px; font-size: 62px; line-height: 1.1; letter-spacing: -.035em; max-width: 900px; }
+  .grad { background: linear-gradient(100deg, #c7d2fe, #818cf8 45%, #34d399); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  p { margin: 0; color: #b9c2d8; font-size: 23px; line-height: 1.5; max-width: 860px; }
+  .tags { margin-top: auto; display: flex; gap: 10px; flex-wrap: wrap; }
+  .tag { border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.05); color: #c7d2e8; border-radius: 999px; padding: 8px 16px; font-size: 16px; font-weight: 600; }
+  .pill { position: absolute; right: 72px; bottom: 64px; font-family: ui-monospace, Consolas, monospace; font-size: 15px; color: #8e9ab7; }
+</style>
+</head>
+<body>
+  <div class="glow"></div><div class="grid"></div>
+  <div class="inner">
+    <div class="brand"><img src="logo.svg" alt="" /> UnionUser</div>
+    <h1>Licensing infrastructure<br /><span class="grad">for desktop software</span></h1>
+    <p>Activation, trials, subscriptions, payments, updates and a customer portal — in one platform.</p>
+    <div class="tags">
+      <span class="tag">Ed25519 offline verification</span>
+      <span class="tag">License key only</span>
+      <span class="tag">Stripe built in</span>
+      <span class="tag">Self-hosting</span>
+    </div>
+    <div class="pill">unionuser.com</div>
+  </div>
+</body>
+</html>
