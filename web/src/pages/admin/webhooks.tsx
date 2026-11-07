@@ -555,10 +555,10 @@ function DeliveryLogDialog({ webhookId, onClose }: { webhookId: string; onClose:
                         <Badge
                           className={
                             d.status === "delivered"
-                              ? "bg-emerald-100 text-emerald-800"
+                              ? "border-border bg-success text-success-foreground"
                               : d.status === "failed"
-                                ? "bg-red-100 text-red-800"
-                                : "bg-amber-100 text-amber-800"
+                                ? "border-border bg-alert text-alert-foreground"
+                                : "border-border bg-warning text-warning-foreground"
                           }
                         >
                           {t(`status.${d.status}` as TranslationKeys)}

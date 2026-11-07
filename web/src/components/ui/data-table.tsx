@@ -9,8 +9,8 @@ import { cn } from "@/lib/utils"
 
 const DataTable = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
   ({ className, ...props }, ref) => (
-    <div className="relative w-full overflow-auto rounded-md border">
-      <table ref={ref} className={cn("w-full caption-bottom text-sm border-collapse", className)} {...props} />
+    <div className="relative w-full overflow-auto rounded-lg border">
+      <table ref={ref} className={cn("w-full caption-bottom border-collapse text-[13px]", className)} {...props} />
     </div>
   ),
 )
@@ -18,7 +18,7 @@ DataTable.displayName = "DataTable"
 
 const DataTableHeader = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(
   ({ className, ...props }, ref) => (
-    <thead ref={ref} className={cn("bg-muted/50 [&_tr]:border-b [&_tr:hover]:bg-transparent", className)} {...props} />
+    <thead ref={ref} className={cn("bg-muted [&_tr]:border-b [&_tr:hover]:bg-transparent", className)} {...props} />
   ),
 )
 DataTableHeader.displayName = "DataTableHeader"
@@ -34,7 +34,7 @@ const DataTableRow = React.forwardRef<HTMLTableRowElement, React.HTMLAttributes<
   ({ className, ...props }, ref) => (
     <tr
       ref={ref}
-      className={cn("border-b transition-colors hover:bg-muted/40 data-[state=selected]:bg-muted", className)}
+      className={cn("border-b transition-colors hover:bg-muted/60 data-[state=selected]:bg-muted", className)}
       {...props}
     />
   ),
@@ -46,7 +46,7 @@ const DataTableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttribu
     <th
       ref={ref}
       className={cn(
-        "h-10 whitespace-nowrap px-3 text-left align-middle text-xs font-semibold uppercase tracking-wider text-muted-foreground [&:has([role=checkbox])]:pr-0",
+        "h-9 whitespace-nowrap px-4 text-left align-middle text-xs font-semibold uppercase tracking-wider text-muted-foreground [&:has([role=checkbox])]:pr-0",
         className,
       )}
       {...props}
@@ -82,13 +82,13 @@ function DataTableSortHead({
   return (
     <th
       aria-sort={active ? (sort.order === "asc" ? "ascending" : "descending") : "none"}
-      className={cn("h-10 p-0 text-left align-middle [&:has([role=checkbox])]:pr-0", className)}
+      className={cn("h-9 p-0 text-left align-middle [&:has([role=checkbox])]:pr-0", className)}
     >
       <button
         type="button"
         onClick={() => sort.toggle(column, firstOrder)}
         className={cn(
-          "group flex h-10 w-full items-center gap-1 whitespace-nowrap px-3 text-left text-xs font-semibold uppercase tracking-wider transition-colors",
+          "group flex h-9 w-full items-center gap-1 whitespace-nowrap px-4 text-left text-xs font-semibold uppercase tracking-wider transition-colors",
           active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
         )}
       >
@@ -111,7 +111,7 @@ const DataTableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttribu
   ({ className, ...props }, ref) => (
     <td
       ref={ref}
-      className={cn("px-3 py-2.5 align-middle text-sm [&:has([role=checkbox])]:pr-0", className)}
+      className={cn("px-4 py-2.5 align-middle text-[13px] [&:has([role=checkbox])]:pr-0", className)}
       {...props}
     />
   ),
@@ -161,7 +161,7 @@ function DataTablePagination({
     // Two rows on a phone, one on a wide screen. Side by side at 390px
     // the controls ran past the edge and the next/last buttons became
     // unreachable, which is a pager that cannot page.
-    <div className="flex flex-col gap-3 px-1 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+    <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span className="whitespace-nowrap">
           {t("common.pageRange", { from, to, total: total.toLocaleString(locale) })}

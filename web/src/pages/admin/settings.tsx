@@ -676,7 +676,7 @@ export default function SettingsPage() {
 
                 {updateData &&
                   (updateData.available ? (
-                    <div className="flex items-center gap-2 bg-blue-50 text-blue-800 rounded-lg px-4 py-2 text-sm">
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-info px-4 py-2 text-[13px] text-info-foreground">
                       <ArrowUpCircle className="h-4 w-4" />
                       <span>{t("settings.updateAvailable", { version: updateData.latest_version })}</span>
                       {updateData.release_url && (

@@ -785,7 +785,7 @@ function ActiveSigningKeyCard({
               {t("updateSettings.createdOn", { date: formatDate(keyRow.created_at) })}
             </p>
           </div>
-          <Badge className="bg-emerald-100 text-emerald-800">{t("updateSettings.activeBadge")}</Badge>
+          <Badge className="border-border bg-success text-success-foreground">{t("updateSettings.activeBadge")}</Badge>
         </div>
         <PublicKeyField label={t("updateSettings.sparkleKey")} value={keyRow.public_key}>
           {rich(t("updateSettings.sparkleKeyHint"), { field: <code>SUPublicEDKey</code> })}
@@ -843,7 +843,7 @@ function RotateKeyDialog({ productId, onClose }: { productId: string; onClose: (
               placeholder={t("updateSettings.rotatePlaceholder")}
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              className="flex min-h-[60px] w-full rounded-lg border border-input bg-card px-3 py-2 text-[13px]"
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -889,7 +889,7 @@ function DeactivateKeyDialog({ productId, onClose }: { productId: string; onClos
               placeholder={t("updateSettings.deactivatePlaceholder")}
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              className="flex min-h-[60px] w-full rounded-lg border border-input bg-card px-3 py-2 text-[13px]"
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">

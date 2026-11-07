@@ -4,7 +4,6 @@ import {
   Building2,
   ChevronDown,
   FileKey2,
-  Heart,
   Key,
   Layers,
   LayoutDashboard,
@@ -115,13 +114,13 @@ export function AdminLayout() {
       <Link key={item.to} to={item.to} onClick={() => setNavOpen(false)}>
         <div
           className={cn(
-            "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+            "flex items-center gap-3 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors",
             active
-              ? "bg-accent text-accent-foreground"
-              : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+              ? "bg-muted font-semibold text-foreground"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
           )}
         >
-          <item.icon className="h-4 w-4" />
+          <item.icon className="h-[18px] w-[18px]" />
           {item.label}
         </div>
       </Link>
@@ -138,21 +137,20 @@ export function AdminLayout() {
         which sits at the panel's top right. The permanent sidebar is
         hidden below md, so the wider padding only ever applies inside
         the drawer. */}
-      <div className="p-4 pr-11 md:pr-4 flex items-center gap-2.5">
+      <div className="flex h-14 items-center gap-2.5 border-b px-4 pr-11 md:pr-4">
         <img src={logo_url || "/logo.svg"} alt={site_name} className="h-7 w-7" />
-        <span className="font-bold text-lg tracking-tight truncate">{site_name}</span>
-        <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium ml-auto shrink-0">
+        <span className="truncate text-[15px] font-semibold tracking-tight">{site_name}</span>
+        <span className="ml-auto shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           Admin
         </span>
       </div>
-      <Separator />
       <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
         {adminNav.map((entry, idx) => {
           if ("to" in entry) return renderNavItem(entry)
           const group = entry as NavGroup
           return (
             <div key={group.label} className={cn(idx > 0 && "mt-4")}>
-              <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground/60 uppercase tracking-wider">
+              <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-subtle-foreground">
                 {group.label}
               </div>
               {group.items.map(renderNavItem)}
@@ -162,12 +160,6 @@ export function AdminLayout() {
       </nav>
       {/* Settings — fixed at bottom above user menu */}
       <div className="px-2">{renderNavItem(settingsItem)}</div>
-      <a href="https://keygate.app/sponsorships" target="_blank" rel="noopener noreferrer" className="block px-2 pb-1">
-        <div className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-pink-50 hover:text-pink-700 transition-colors">
-          <Heart className="h-4 w-4 text-pink-500 fill-pink-500" />
-          {t("nav.sponsor")}
-        </div>
-      </a>
       <Separator />
       <div className="p-3">
         <DropdownMenu>
@@ -212,7 +204,7 @@ export function AdminLayout() {
       {/* Sidebar — a column of its own from md up, and the contents of
         the drawer below it. 240px of a 390px phone is not a sidebar,
         it is the whole screen. */}
-      <aside className="hidden w-60 shrink-0 border-r bg-card md:flex md:flex-col">{sidebar}</aside>
+      <aside className="hidden w-64 shrink-0 border-r bg-card md:flex md:flex-col">{sidebar}</aside>
 
       {/* min-w-0 is what lets a wide table scroll inside this column
         instead of stretching it: a flex child's default min-width is
@@ -247,8 +239,14 @@ export function AdminLayout() {
           </span>
         </header>
 
+        <header className="hidden h-14 shrink-0 items-center gap-2 border-b bg-card px-6 md:flex">
+          <span className="text-[13px] text-subtle-foreground">{site_name}</span>
+          <span className="text-border">/</span>
+          <span className="text-[13px] font-semibold">{currentPage?.label ?? site_name}</span>
+        </header>
+
         <main className="flex-1 overflow-auto">
-          <div className="p-4 md:p-8">
+          <div className="p-4 md:p-6">
             <ErrorBoundary>
               <Outlet />
             </ErrorBoundary>

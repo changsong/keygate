@@ -71,7 +71,6 @@ const en = {
   "nav.insights": "Insights",
   "nav.customers": "Customers",
   "nav.settings": "Settings",
-  "nav.sponsor": "Sponsor Us",
   "nav.menu": "Menu",
   "nav.portal": "User Portal",
   "nav.logout": "Logout",

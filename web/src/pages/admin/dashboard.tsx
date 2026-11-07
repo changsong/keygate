@@ -49,29 +49,27 @@ export default function DashboardPage() {
       </div>
 
       {updateData?.available && (
-        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+        <div className="flex items-center justify-between rounded-lg border border-border bg-info px-4 py-3">
           <div className="flex items-center gap-3">
-            <ArrowUpCircle className="h-5 w-5 text-blue-600" />
+            <ArrowUpCircle className="h-5 w-5 text-info-foreground" />
             <div>
-              <p className="text-sm font-medium text-blue-900">
+              <p className="text-sm font-medium text-info-foreground">
                 {t("dashboard.updateAvailable", { version: updateData.latest_version })}
               </p>
               {updateData.update_command && (
-                <code className="text-xs text-blue-700 font-mono mt-0.5 block">{updateData.update_command}</code>
+                <code className="mt-0.5 block font-mono text-xs text-info-foreground">{updateData.update_command}</code>
               )}
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Link to="/admin/settings?tab=system">
-              <Button size="sm" variant="outline" className="text-blue-700 border-blue-300">
+              <Button size="sm" variant="outline" className="border-border text-info-foreground">
                 {t("dashboard.viewUpdate")}
               </Button>
             </Link>
             {updateData.release_url && (
               <a href={updateData.release_url} target="_blank" rel="noopener noreferrer">
-                <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-                  {t("dashboard.releaseNotes")}
-                </Button>
+                <Button size="sm">{t("dashboard.releaseNotes")}</Button>
               </a>
             )}
           </div>

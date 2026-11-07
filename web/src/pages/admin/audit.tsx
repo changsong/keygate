@@ -44,10 +44,10 @@ export default function AuditPage() {
   const totalPages = Math.ceil(total / limit)
 
   const actionColor = (action: string) => {
-    if (action === "created") return "bg-emerald-100 text-emerald-800"
-    if (action === "deleted" || action === "revoked") return "bg-red-100 text-red-800"
-    if (action === "suspended") return "bg-orange-100 text-orange-800"
-    return "bg-blue-100 text-blue-800"
+    if (action === "created") return "border-border bg-success text-success-foreground"
+    if (action === "deleted" || action === "revoked") return "border-border bg-alert text-alert-foreground"
+    if (action === "suspended") return "border-border bg-warning text-warning-foreground"
+    return "border-border bg-info text-info-foreground"
   }
 
   return (

@@ -140,10 +140,10 @@ export default function LicensesPage() {
 
   if (!isLoading && products.length === 0) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight sr-only md:not-sr-only">{t("licenses.title")}</h1>
-          <p className="text-muted-foreground">Manage software licenses.</p>
+          <h1 className="text-2xl font-semibold tracking-tight sr-only md:not-sr-only">{t("licenses.title")}</h1>
+          <p className="text-[13px] text-muted-foreground">Manage software licenses.</p>
         </div>
         <Card>
           <CardContent className="py-12 text-center">
@@ -162,11 +162,11 @@ export default function LicensesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight sr-only md:not-sr-only">{t("licenses.title")}</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-2xl font-semibold tracking-tight sr-only md:not-sr-only">{t("licenses.title")}</h1>
+          <p className="text-[13px] text-muted-foreground">
             {t(total === 1 ? "licenses.totalOne" : "licenses.totalMany", { count: total.toLocaleString(locale) })}
           </p>
         </div>
@@ -252,7 +252,7 @@ export default function LicensesPage() {
                     <DataTableRow key={lic.id}>
                       <DataTableCell className="font-medium">{lic.email}</DataTableCell>
                       <DataTableCell>
-                        <code className="text-xs bg-muted px-1.5 py-0.5 rounded whitespace-nowrap">
+                        <code className="whitespace-nowrap rounded border border-border/60 bg-muted px-1.5 py-0.5 font-mono text-[11px]">
                           {maskKey(data?.license_key_hints?.[lic.id], data?.license_key_prefixes?.[lic.id])}
                         </code>
                       </DataTableCell>
@@ -264,7 +264,7 @@ export default function LicensesPage() {
                         licence however full it is. SaaS is seat-based
                         and has neither, so it gets nothing rather than
                         a number that never moves. */}
-                      <DataTableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                      <DataTableCell className="text-[11px] font-mono text-muted-foreground whitespace-nowrap">
                         {lic.product?.type === "saas"
                           ? "-"
                           : `${
@@ -278,10 +278,10 @@ export default function LicensesPage() {
                           {t(`status.${lic.status}` as TranslationKeys)}
                         </Badge>
                       </DataTableCell>
-                      <DataTableCell className="text-muted-foreground text-xs">
+                      <DataTableCell className="text-[11px] font-mono text-muted-foreground">
                         {lic.valid_until ? formatDate(lic.valid_until) : t("licenses.perpetual")}
                       </DataTableCell>
-                      <DataTableCell className="text-muted-foreground text-xs">
+                      <DataTableCell className="text-[11px] font-mono text-muted-foreground">
                         {formatDate(lic.created_at)}
                       </DataTableCell>
                       <DataTableCell className="text-right">
@@ -673,7 +673,7 @@ function LicenseDetail({ id, onClose }: { id: string; onClose: () => void }) {
                   <div>
                     <p className="text-muted-foreground">{t("licenses.licenseKey")}</p>
                     <div className="flex items-center gap-2 mt-1">
-                      <code className="bg-muted px-2 py-1 rounded text-xs">
+                      <code className="rounded bg-muted px-2 py-1 font-mono text-[11px]">
                         {revealedKey ?? maskKey(lic.license_key_hint, lic.license_key_prefix)}
                       </code>
                       {!revealedKey && (
@@ -1095,10 +1095,10 @@ function LicenseDetail({ id, onClose }: { id: string; onClose: () => void }) {
                                   <Badge variant="secondary">{act.identifier_type}</Badge>
                                 </DataTableCell>
                                 <DataTableCell className="text-muted-foreground">{act.label || "-"}</DataTableCell>
-                                <DataTableCell className="text-muted-foreground text-xs break-all">
+                                <DataTableCell className="text-[11px] font-mono text-muted-foreground break-all">
                                   {act.member_email ?? t("licenses.keyHolderLicense")}
                                 </DataTableCell>
-                                <DataTableCell className="text-muted-foreground text-xs">
+                                <DataTableCell className="text-[11px] font-mono text-muted-foreground">
                                   {formatDate(act.last_verified)}
                                 </DataTableCell>
                                 <DataTableCell>
@@ -1297,9 +1297,11 @@ function UsageTab({ licenseId }: { licenseId: string }) {
                   <DataTableCell>
                     <Badge variant="secondary">{c.period}</Badge>
                   </DataTableCell>
-                  <DataTableCell className="text-muted-foreground text-xs">{c.period_key}</DataTableCell>
+                  <DataTableCell className="text-[11px] font-mono text-muted-foreground">{c.period_key}</DataTableCell>
                   <DataTableCell className="font-medium">{c.used}</DataTableCell>
-                  <DataTableCell className="text-muted-foreground text-xs">{formatDate(c.updated_at)}</DataTableCell>
+                  <DataTableCell className="text-[11px] font-mono text-muted-foreground">
+                    {formatDate(c.updated_at)}
+                  </DataTableCell>
                   <DataTableCell>
                     <Button
                       variant="ghost"
@@ -1342,8 +1344,12 @@ function UsageTab({ licenseId }: { licenseId: string }) {
                   <DataTableRow key={e.id}>
                     <DataTableCell className="font-medium">{e.feature}</DataTableCell>
                     <DataTableCell>{e.quantity}</DataTableCell>
-                    <DataTableCell className="text-muted-foreground text-xs">{e.ip_address || "-"}</DataTableCell>
-                    <DataTableCell className="text-muted-foreground text-xs">{formatDate(e.recorded_at)}</DataTableCell>
+                    <DataTableCell className="text-[11px] font-mono text-muted-foreground">
+                      {e.ip_address || "-"}
+                    </DataTableCell>
+                    <DataTableCell className="text-[11px] font-mono text-muted-foreground">
+                      {formatDate(e.recorded_at)}
+                    </DataTableCell>
                   </DataTableRow>
                 ))}
               </DataTableBody>
@@ -1533,15 +1539,24 @@ function SeatsTab({
                           : t("portal.roleMember")}
                       </Badge>
                       {joined && s.paused ? (
-                        <Badge className="bg-amber-100 text-amber-800" title={t("portal.seatPausedHint")}>
+                        <Badge
+                          className="border-border bg-warning text-warning-foreground"
+                          title={t("portal.seatPausedHint")}
+                        >
                           {t("portal.seatPaused")}
                         </Badge>
                       ) : joined ? (
-                        <Badge className="bg-emerald-100 text-emerald-800">{t("licenses.active")}</Badge>
+                        <Badge className="border-border bg-success text-success-foreground">
+                          {t("licenses.active")}
+                        </Badge>
                       ) : expired ? (
-                        <Badge className="bg-red-100 text-red-800">{t("portal.inviteExpired")}</Badge>
+                        <Badge className="border-border bg-alert text-alert-foreground">
+                          {t("portal.inviteExpired")}
+                        </Badge>
                       ) : (
-                        <Badge className="bg-amber-100 text-amber-800">{t("licenses.pending")}</Badge>
+                        <Badge className="border-border bg-warning text-warning-foreground">
+                          {t("licenses.pending")}
+                        </Badge>
                       )}
                       <span className="text-xs text-muted-foreground">
                         {joined
@@ -1557,7 +1572,7 @@ function SeatsTab({
                           {t("licenses.memberKey")}
                         </span>
                         <code
-                          className={`min-w-0 bg-muted px-1.5 py-0.5 rounded text-xs ${shownKey(s) ? "break-all" : "whitespace-nowrap"}`}
+                          className={`min-w-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] ${shownKey(s) ? "break-all" : "whitespace-nowrap"}`}
                         >
                           {shownKey(s) ?? maskKey(s.key_hint, s.key_prefix)}
                         </code>

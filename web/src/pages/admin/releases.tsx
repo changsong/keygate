@@ -481,10 +481,10 @@ function StatusBadge({ status, yankedReason }: { status: string; yankedReason?: 
           : status
   const cls =
     status === "published"
-      ? "bg-emerald-100 text-emerald-800"
+      ? "border-border bg-success text-success-foreground"
       : status === "yanked"
-        ? "bg-red-100 text-red-800"
-        : "bg-amber-100 text-amber-800"
+        ? "border-border bg-alert text-alert-foreground"
+        : "border-border bg-warning text-warning-foreground"
   return (
     <Badge className={cls} title={yankedReason}>
       {status === "yanked" && <AlertTriangle className="h-3 w-3 mr-1" />}
@@ -576,7 +576,7 @@ function CreateReleaseDialog({ onClose, onCreated }: { onClose: () => void; onCr
                 placeholder={t("releases.releaseNotesPlaceholder")}
                 value={releaseNotes}
                 onChange={(e) => setReleaseNotes(e.target.value)}
-                className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex min-h-[60px] w-full rounded-lg border border-input bg-card px-3 py-2 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
@@ -717,9 +717,9 @@ function ArtifactRow({
         </Badge>
       )}
       {ready ? (
-        <Badge className="bg-emerald-100 text-emerald-800 text-[10px]">{t("releases.ready")}</Badge>
+        <Badge className="border-border bg-success text-success-foreground text-[10px]">{t("releases.ready")}</Badge>
       ) : (
-        <Badge className="bg-amber-100 text-amber-800 text-[10px]">{t("releases.pending")}</Badge>
+        <Badge className="border-border bg-warning text-warning-foreground text-[10px]">{t("releases.pending")}</Badge>
       )}
       {canEdit && (
         <Button
@@ -907,7 +907,7 @@ function YankDialog({ release, onClose }: { release: Release; onClose: () => voi
               placeholder={t("releases.yankPlaceholder")}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex min-h-[60px] w-full rounded-lg border border-input bg-card px-3 py-2 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
